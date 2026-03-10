@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  minsah-proxy:
+    build: .
+    container_name: minsah-proxy
+    restart: always
+    environment:
+      # ── এগুলো Dokploy Environment Variables এ দাও ──
+      - STOCK_SHEET_URL=${STOCK_SHEET_URL}
+      - SHOP_SHEET_URL=${SHOP_SHEET_URL}
+      - INBOX_SHEET_URL=${INBOX_SHEET_URL}
+      - N8N_REPLY_URL=${N8N_REPLY_URL}
+      - WHATSAPP_NUMBER=${WHATSAPP_NUMBER}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - PORT=3000
+    labels:
+      - "traefik.enable=true"
+      # Stock admin app
+      - "traefik.http.routers.minsah-stock.rule=Host(`stock.minsahbeauty.cloud`)"
+      - "traefik.http.routers.minsah-stock.entrypoints=web"
+      # Shop app
+      - "traefik.http.routers.minsah-shop.rule=Host(`shop.minsahbeauty.cloud`)"
+      - "traefik.http.routers.minsah-shop.entrypoints=web"
+      - "traefik.http.services.minsah-proxy.loadbalancer.server.port=3000"
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
