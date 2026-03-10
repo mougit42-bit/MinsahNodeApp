@@ -5,9 +5,10 @@ WORKDIR /app
 COPY package.json .
 RUN npm install --production
 
-COPY server.js .
+# Copy all files including public/ folder
+COPY . .
+
 RUN mkdir -p public
-COPY public/ ./public/
 
 EXPOSE 4000
 
