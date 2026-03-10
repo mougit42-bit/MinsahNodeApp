@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 // ── ENV VARIABLES (Dokploy তে set করবে) ──
 const STOCK_SHEET_URL  = process.env.STOCK_SHEET_URL  || '';
