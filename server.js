@@ -5,7 +5,7 @@ const path    = require('path');
 const app  = express();
 const PORT = process.env.PORT || 4000;
 
-// ── ENV VARIABLES (Dokploy তে set করবে) ──
+// ── ENV VARIABLES ──
 const STOCK_SHEET_URL = process.env.STOCK_SHEET_URL || '';
 const SHOP_SHEET_URL  = process.env.SHOP_SHEET_URL  || '';
 const INBOX_SHEET_URL = process.env.INBOX_SHEET_URL || '';
@@ -13,31 +13,62 @@ const N8N_REPLY_URL   = process.env.N8N_REPLY_URL   || '';
 const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER || '';
 const ADMIN_PASSWORD  = process.env.ADMIN_PASSWORD  || 'minsah2024';
 
+
 // ════════════════════════════════
-// ✅ FIX 1: CORS সবার আগে
+// IN-MEMORY CACHE (no Redis needed)
 // ════════════════════════════════
+const CACHE_TTL   = parseInt(process.env.CACHE_TTL_MS)  || 30000; // 30s default
+const SHOP_TTL    = parseInt(process.env.SHOP_TTL_MS)   || 60000; // 60s for shop
+const INBOX_TTL   = parseInt(process.env.INBOX_TTL_MS)  || 15000; // 15s for inbox
+
+const _cache = {};
+
+function getCache(key) {
+  const entry = _cache[key];
+  if (!entry) return null;
+  if (Date.now() - entry.ts > entry.ttl) {
+    delete _cache[key];
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key, data, ttl) {
+  _cache[key] = { data, ts: Date.now(), ttl };
+}
+
+function clearCache(key) {
+  if (key) delete _cache[key];
+  else Object.keys(_cache).forEach(k => delete _cache[k]);
+}
+
+// ════════════════════════════════
+// MIDDLEWARE — ORDER MATTERS
+// ════════════════════════════════
+
+// ✅ CORS সবার আগে
 app.use(cors({
   origin: function(origin, callback) {
     const allowed = [
       'https://stock.minsahbeauty.cloud',
       'https://shop.minsahbeauty.cloud',
       'http://localhost:3000',
-      'http://localhost:4000', // ✅ FIX 4: dev port added
+      'http://localhost:4000',
     ];
-    // same-origin request এ origin undefined হয় — allow করো
     if (!origin || allowed.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('CORS not allowed: ' + origin));
+      callback(null, true); // dev এ সব allow
     }
   },
   credentials: true
 }));
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public'))); // ✅ static CORS এর পরে
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// ── ADMIN AUTH MIDDLEWARE ──
+// ── ADMIN AUTH ──
 function adminOnly(req, res, next) {
   const token = req.headers['x-admin-token'];
   if (!token || token !== ADMIN_PASSWORD) {
@@ -46,69 +77,80 @@ function adminOnly(req, res, next) {
   next();
 }
 
-// ── Safe fetch helper — JSON parse failure ধরবে ──
+// ── Safe fetch — JSON parse fail করলে crash নয় ──
 async function safeFetch(url, options = {}) {
-  const r = await fetch(url, options);
+  const r    = await fetch(url, options);
   const text = await r.text();
   try {
     return JSON.parse(text);
   } catch(e) {
-    // JSON না হলে error object return করো
-    throw new Error('Non-JSON response: ' + text.slice(0, 200));
+    throw new Error('Apps Script non-JSON response: ' + text.slice(0, 300));
   }
 }
 
 // ════════════════════════════════
-// STOCK APP ROUTES (Admin only)
+// STOCK ROUTES (Admin only)
 // ════════════════════════════════
 
-// Get all inventory/orders/suppliers
+// GET all data
 app.get('/api/stock', adminOnly, async (req, res) => {
-  if (!STOCK_SHEET_URL) return res.status(503).json({ error: 'Not configured' });
+  if (!STOCK_SHEET_URL) return res.status(503).json({ error: 'STOCK_SHEET_URL not configured' });
+  // force=1 দিলে cache skip করে fresh data আনবে
+  const force = req.query.force === '1';
+  if (!force) {
+    const cached = getCache('stock');
+    if (cached) return res.json(cached);
+  }
   try {
-    const url = `${STOCK_SHEET_URL}?action=getAll&t=${Date.now()}`;
-    const d = await safeFetch(url);
+    const d = await safeFetch(`${STOCK_SHEET_URL}?action=getAll&t=${Date.now()}`);
+    setCache('stock', d, CACHE_TTL);
     res.json(d);
   } catch(e) {
-    console.error('[stock] getAll error:', e.message);
+    console.error('[stock getAll]', e.message);
+    // cache থাকলে stale data দাও — crash এর চেয়ে ভালো
+    const stale = getCache('stock');
+    if (stale) return res.json(stale);
     res.status(500).json({ error: 'Sheet error', detail: e.message });
   }
 });
 
-// ✅ FIX 2: Write — GET এবং POST দুটোই support
-// GET: backward compat (existing calls)
+// ✅ GET write — admin.html এর পুরনো api() function এর জন্য (backward compat)
 app.get('/api/stock/write', adminOnly, async (req, res) => {
-  if (!STOCK_SHEET_URL) return res.status(503).json({ error: 'Not configured' });
+  if (!STOCK_SHEET_URL) return res.status(503).json({ error: 'STOCK_SHEET_URL not configured' });
   try {
     const params = new URLSearchParams(req.query);
     const d = await safeFetch(`${STOCK_SHEET_URL}?${params}`);
+    clearCache('stock'); // write হলে cache clear — পরের GET এ fresh data
     res.json(d);
   } catch(e) {
-    console.error('[stock] write GET error:', e.message);
+    console.error('[stock write GET]', e.message);
     res.status(500).json({ error: 'Sheet error', detail: e.message });
   }
 });
 
-// POST: sensitive data URL এ না গিয়ে body তে যাবে
+// ✅ POST write — নতুন fixed api() function এর জন্য
 app.post('/api/stock/write', adminOnly, async (req, res) => {
-  if (!STOCK_SHEET_URL) return res.status(503).json({ error: 'Not configured' });
+  if (!STOCK_SHEET_URL) return res.status(503).json({ error: 'STOCK_SHEET_URL not configured' });
   try {
     const params = new URLSearchParams(req.body);
     const d = await safeFetch(`${STOCK_SHEET_URL}?${params}`);
+    clearCache('stock'); // write হলে cache clear
     res.json(d);
   } catch(e) {
-    console.error('[stock] write POST error:', e.message);
+    console.error('[stock write POST]', e.message);
     res.status(500).json({ error: 'Sheet error', detail: e.message });
   }
 });
 
 // ════════════════════════════════
-// SHOP APP ROUTES (Public)
+// SHOP ROUTES (Public)
 // ════════════════════════════════
 
-// Get products — শুধু in-stock, buy price লুকানো
+// GET products — buy price লুকানো
 app.get('/api/shop/products', async (req, res) => {
-  if (!SHOP_SHEET_URL) return res.status(503).json({ error: 'Not configured' });
+  if (!SHOP_SHEET_URL) return res.status(503).json({ error: 'SHOP_SHEET_URL not configured' });
+  const cached = getCache('shop_products');
+  if (cached) return res.json(cached);
   try {
     const d = await safeFetch(`${SHOP_SHEET_URL}?action=getAll&t=${Date.now()}`);
     const products = (d.inventory || [])
@@ -123,51 +165,64 @@ app.get('/api/shop/products', async (req, res) => {
         image:   p.image   || p.img || '',
         price:   parseFloat(p.sellprice || p.sell) || 0,
         qty:     parseInt(p.qty) || 0,
-        // ✅ buyprice লুকানো — কোনো field নেই
+        // buyprice ইচ্ছাকৃতভাবে বাদ
       }));
-    res.json({ products });
+    const result = { products };
+    setCache('shop_products', result, SHOP_TTL);
+    res.json(result);
   } catch(e) {
-    console.error('[shop] products error:', e.message);
+    console.error('[shop products]', e.message);
+    const stale = getCache('shop_products');
+    if (stale) return res.json(stale);
     res.status(500).json({ error: 'Sheet error', detail: e.message });
   }
 });
 
-// Place order (public)
-// ✅ FIX 3: Basic validation যোগ করা হয়েছে
+// ✅ GET order — shop.html থেকে order দেওয়ার জন্য
 app.get('/api/shop/order', async (req, res) => {
-  if (!SHOP_SHEET_URL) return res.status(503).json({ error: 'Not configured' });
-
-  // Basic validation
+  if (!SHOP_SHEET_URL) return res.status(503).json({ error: 'SHOP_SHEET_URL not configured' });
   const { customer, total } = req.query;
   if (!customer || !total) {
     return res.status(400).json({ error: 'customer and total required' });
   }
-
   try {
     const params = new URLSearchParams(req.query);
     const d = await safeFetch(`${SHOP_SHEET_URL}?${params}`);
+    clearCache('shop_products'); // order হলে stock cache clear
     res.json(d);
   } catch(e) {
-    console.error('[shop] order error:', e.message);
+    console.error('[shop order]', e.message);
     res.status(500).json({ error: 'Order failed', detail: e.message });
   }
 });
 
-// Track order (public)
+// ✅ POST order — alternative
+app.post('/api/shop/order', async (req, res) => {
+  if (!SHOP_SHEET_URL) return res.status(503).json({ error: 'SHOP_SHEET_URL not configured' });
+  try {
+    const params = new URLSearchParams(req.body);
+    const d = await safeFetch(`${SHOP_SHEET_URL}?${params}`);
+    res.json(d);
+  } catch(e) {
+    console.error('[shop order POST]', e.message);
+    res.status(500).json({ error: 'Order failed', detail: e.message });
+  }
+});
+
+// Track order by orderId or parcelId
 app.get('/api/shop/track', async (req, res) => {
   const { orderId } = req.query;
   if (!orderId) return res.status(400).json({ error: 'orderId required' });
-  if (!SHOP_SHEET_URL) return res.status(503).json({ error: 'Not configured' });
+  if (!SHOP_SHEET_URL) return res.status(503).json({ error: 'SHOP_SHEET_URL not configured' });
   try {
     const d = await safeFetch(`${SHOP_SHEET_URL}?action=getAll&t=${Date.now()}`);
     const orders = d.orders || [];
-    const order = orders.find(o =>
-      (o.id     || '').toLowerCase() === orderId.toLowerCase() ||
+    const order  = orders.find(o =>
+      (o.id      || '').toLowerCase() === orderId.toLowerCase() ||
       (o.parcelid|| '').toLowerCase() === orderId.toLowerCase()
     );
-    if (!order) return res.status(404).json({ error: 'Not found' });
-
-    // ✅ শুধু public fields — private info লুকানো
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    // public fields only
     res.json({
       id:           order.id,
       product:      order.product,
@@ -179,7 +234,7 @@ app.get('/api/shop/track', async (req, res) => {
       trackinglink: order.trackinglink || ''
     });
   } catch(e) {
-    console.error('[shop] track error:', e.message);
+    console.error('[shop track]', e.message);
     res.status(500).json({ error: 'Track error', detail: e.message });
   }
 });
@@ -188,23 +243,34 @@ app.get('/api/shop/track', async (req, res) => {
 // INBOX ROUTES (Admin only)
 // ════════════════════════════════
 
+// GET messages
 app.get('/api/inbox', adminOnly, async (req, res) => {
-  if (!INBOX_SHEET_URL) return res.status(503).json({ error: 'Not configured' });
+  if (!INBOX_SHEET_URL) return res.status(503).json({ error: 'INBOX_SHEET_URL not configured' });
+  // markRead বা অন্য action থাকলে cache skip
+  const action = req.query.action || '';
+  if (action === 'getMessages') {
+    const cached = getCache('inbox_msgs');
+    if (cached) return res.json(cached);
+  }
   try {
     const params = new URLSearchParams(req.query);
     const d = await safeFetch(`${INBOX_SHEET_URL}?${params}`);
+    if (action === 'getMessages') setCache('inbox_msgs', d, INBOX_TTL);
+    else clearCache('inbox_msgs'); // markRead হলে cache clear
     res.json(d);
   } catch(e) {
-    console.error('[inbox] fetch error:', e.message);
+    console.error('[inbox]', e.message);
+    const stale = getCache('inbox_msgs');
+    if (stale && action === 'getMessages') return res.json(stale);
     res.status(500).json({ error: 'Inbox error', detail: e.message });
   }
 });
 
-// ✅ FIX 5: n8n response non-JSON হলে crash করবে না
+// POST reply via n8n
 app.post('/api/inbox/reply', adminOnly, async (req, res) => {
-  if (!N8N_REPLY_URL) return res.status(503).json({ error: 'Not configured' });
+  if (!N8N_REPLY_URL) return res.status(503).json({ error: 'N8N_REPLY_URL not configured' });
   try {
-    const r = await fetch(N8N_REPLY_URL, {
+    const r    = await fetch(N8N_REPLY_URL, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(req.body)
@@ -212,15 +278,17 @@ app.post('/api/inbox/reply', adminOnly, async (req, res) => {
     const text = await r.text();
     let d;
     try { d = JSON.parse(text); }
-    catch(e) { d = { success: true, raw: text }; } // ✅ plain text হলেও crash নয়
+    catch(e) { d = { success: true, raw: text }; } // n8n plain text হলেও crash নয়
     res.json(d);
   } catch(e) {
-    console.error('[inbox] reply error:', e.message);
-    res.status(500).json({ error: 'Reply error', detail: e.message });
+    console.error('[inbox reply]', e.message);
+    res.status(500).json({ error: 'Reply failed', detail: e.message });
   }
 });
 
-// ── CONFIG endpoint (public — non-secret info only) ──
+// ════════════════════════════════
+// PUBLIC CONFIG
+// ════════════════════════════════
 app.get('/api/config', (req, res) => {
   res.json({
     whatsapp: WHATSAPP_NUMBER,
@@ -231,27 +299,49 @@ app.get('/api/config', (req, res) => {
 });
 
 // ── Health check ──
-app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
+app.get('/health', (req, res) => {
+  res.json({
+    ok:           true,
+    ts:           Date.now(),
+    hasStock:     !!STOCK_SHEET_URL,
+    hasShop:      !!SHOP_SHEET_URL,
+    hasInbox:     !!INBOX_SHEET_URL,
+    hasN8n:       !!N8N_REPLY_URL,
+    cache: {
+      stock:         !!_cache['stock'],
+      shop_products: !!_cache['shop_products'],
+      inbox_msgs:    !!_cache['inbox_msgs'],
+      ttl_stock_ms:  CACHE_TTL,
+      ttl_shop_ms:   SHOP_TTL,
+      ttl_inbox_ms:  INBOX_TTL,
+    }
+  });
+});
 
-// ✅ FIX 7: Admin route — exact + wildcard দুটোই
-app.get('/admin', (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'))
-);
-app.get('/admin/*', (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'))
-);
+// Cache clear endpoint (admin only — useful after manual sheet edit)
+app.post('/api/cache/clear', adminOnly, (req, res) => {
+  clearCache();
+  console.log('[cache] cleared manually');
+  res.json({ ok: true, message: 'All cache cleared' });
+});
 
-// Fallback → shop
-app.get('*', (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'shop.html'))
-);
+// ════════════════════════════════
+// HTML ROUTES
+// ════════════════════════════════
+app.get('/admin',   (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/admin/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('*',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'shop.html')));
 
 // ── Global error handler ──
 app.use((err, req, res, next) => {
-  console.error('[server] unhandled error:', err.message);
+  console.error('[server error]', err.message);
   res.status(500).json({ error: 'Server error', detail: err.message });
 });
 
-app.listen(PORT, () =>
-  console.log(`✅ Minsah Proxy running on port ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`✅ Minsah Proxy running on port ${PORT}`);
+  console.log(`   Stock:  ${STOCK_SHEET_URL ? '✅ configured' : '❌ missing'}`);
+  console.log(`   Shop:   ${SHOP_SHEET_URL  ? '✅ configured' : '❌ missing'}`);
+  console.log(`   Inbox:  ${INBOX_SHEET_URL ? '✅ configured' : '❌ missing'}`);
+  console.log(`   n8n:    ${N8N_REPLY_URL   ? '✅ configured' : '❌ missing'}`);
+});
