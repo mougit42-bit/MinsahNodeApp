@@ -702,7 +702,7 @@ const PROXY_BASE   = '';
 })();
 
 let ADMIN_TOKEN    = localStorage.getItem('minsah_admin_token') || '';
-let SHEET_URL      = 'proxy';
+let SHEET_URL = localStorage.getItem('minsah_sheet_url') || 'proxy';
 
 // ✅ FIX 4: localStorage থেকে load করো, 'proxy' string নয়
 let INBOX_SHEET_URL = localStorage.getItem('minsah_inbox_sheet') || '';
@@ -2110,6 +2110,7 @@ async function connectSheet() {
   const url = document.getElementById('sheetUrlInput').value.trim();
   if (!url) return toast('Enter Web App URL','err');
   SHEET_URL = url;
+  localStorage.setItem('minsah_sheet_url', url);
   localStorage.setItem('minsah_url', url);
   closeSettings();
   await fetchAll(false);
