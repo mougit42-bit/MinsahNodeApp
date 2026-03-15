@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 4000;
 const MONGODB_URL     = process.env.MONGODB_URL     || '';
 const N8N_REPLY_URL   = process.env.N8N_REPLY_URL   || '';
 const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER || '';
-const INBOX_SHEET_URL = process.env.INBOX_SHEET_URL || ''; // inbox এখনো sheet এ থাকবে (optional)
 
 // ✅ SECURITY: hardcoded default নেই
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
@@ -28,21 +27,21 @@ if (!MONGODB_URL) {
 // ════════════════════════════════
 
 const inventorySchema = new mongoose.Schema({
-  id:          { type: String, required: true, unique: true },
-  name:        { type: String, default: '' },
-  brand:       { type: String, default: '' },
-  country:     { type: String, default: '' },
-  variant:     { type: String, default: '' },
-  size:        { type: String, default: '' },
-  buyprice:    { type: Number, default: 0 },
-  sellprice:   { type: Number, default: 0 },
-  qty:         { type: Number, default: 0 },
-  supplier:    { type: String, default: '' },
-  lastbuydate: { type: String, default: '' },
-  lowestbuy:   { type: Number, default: 0 },
-  image:       { type: String, default: '' },
-  totalsold:   { type: Number, default: 0 },
-  lastsolddate:{ type: String, default: '' },
+  id:           { type: String, required: true, unique: true },
+  name:         { type: String, default: '' },
+  brand:        { type: String, default: '' },
+  country:      { type: String, default: '' },
+  variant:      { type: String, default: '' },
+  size:         { type: String, default: '' },
+  buyprice:     { type: Number, default: 0 },
+  sellprice:    { type: Number, default: 0 },
+  qty:          { type: Number, default: 0 },
+  supplier:     { type: String, default: '' },
+  lastbuydate:  { type: String, default: '' },
+  lowestbuy:    { type: Number, default: 0 },
+  image:        { type: String, default: '' },
+  totalsold:    { type: Number, default: 0 },
+  lastsolddate: { type: String, default: '' },
 }, { timestamps: true });
 
 const orderSchema = new mongoose.Schema({
@@ -85,10 +84,25 @@ const restockSchema = new mongoose.Schema({
   note:          { type: String, default: '' },
 }, { timestamps: true });
 
+// ✅ NEW: Inbox messages — MongoDB তে
+const messageSchema = new mongoose.Schema({
+  id:         { type: String, required: true, unique: true },
+  senderid:   { type: String, default: '' },
+  sendername: { type: String, default: '' },
+  platform:   { type: String, default: 'fb' },
+  pageid:     { type: String, default: '' },
+  message:    { type: String, default: '' },
+  direction:  { type: String, default: 'in' },
+  timestamp:  { type: String, default: '' },
+  read:       { type: String, default: 'false' },
+  convid:     { type: String, default: '' },
+}, { timestamps: true });
+
 const Inventory = mongoose.model('Inventory', inventorySchema);
 const Order     = mongoose.model('Order',     orderSchema);
 const Supplier  = mongoose.model('Supplier',  supplierSchema);
 const Restock   = mongoose.model('Restock',   restockSchema);
+const Message   = mongoose.model('Message',   messageSchema);
 
 // ════════════════════════════════
 // MONGODB CONNECT
@@ -114,7 +128,7 @@ function adminOnly(req, res, next) {
   next();
 }
 
-// ── doc → plain object (MongoDB _id বাদ দিয়ে) ──
+// ── doc → plain object ──
 function clean(doc) {
   if (!doc) return null;
   const obj = doc.toObject ? doc.toObject() : { ...doc };
@@ -125,14 +139,6 @@ function clean(doc) {
   return obj;
 }
 function cleanAll(docs) { return docs.map(clean); }
-
-// ── safe fetch (inbox এর জন্য) ──
-async function safeFetch(url) {
-  const r    = await fetch(url);
-  const text = await r.text();
-  try { return JSON.parse(text); }
-  catch(e) { throw new Error('Non-JSON: ' + text.slice(0,200)); }
-}
 
 // ════════════════════════════════
 // STOCK ROUTES — GET ALL
@@ -161,7 +167,7 @@ app.get('/api/stock', adminOnly, async (req, res) => {
 // STOCK WRITE — POST
 // ════════════════════════════════
 app.post('/api/stock/write', adminOnly, async (req, res) => {
-  const p = req.body;
+  const p      = req.body;
   const action = p.action || '';
 
   try {
@@ -171,7 +177,7 @@ app.post('/api/stock/write', adminOnly, async (req, res) => {
     if (action === 'addProduct') {
       const id  = 'P' + Date.now();
       const buy = parseFloat(p.buyprice || p.buy) || 0;
-      const doc = await Inventory.create({
+      await Inventory.create({
         id,
         name:        p.name     || '',
         brand:       p.brand    || '',
@@ -382,15 +388,14 @@ app.get('/api/shop/products', async (req, res) => {
     const products = cleanAll(inv).map(p => ({
       id:        p.id,
       name:      p.name,
-      brand:     p.brand   || '',
-      variant:   p.variant || '',
-      size:      p.size    || '',
-      country:   p.country || '',
-      image:     p.image   || '',
+      brand:     p.brand    || '',
+      variant:   p.variant  || '',
+      size:      p.size     || '',
+      country:   p.country  || '',
+      image:     p.image    || '',
       sell:      p.sellprice || 0,
       sellprice: p.sellprice || 0,
       qty:       p.qty || 0,
-      // buyprice intentionally excluded
     }));
     const orders = cleanAll(ords).map(o => ({
       id:           o.id,
@@ -415,21 +420,20 @@ app.post('/api/shop/order', async (req, res) => {
     const id = p.id || ('ORD-' + Date.now().toString().slice(-6));
     await Order.create({
       id,
-      customer: p.customer || '',
-      phone:    p.phone    || '',
-      product:  p.product  || '',
-      productid:p.productId|| '',
-      qty:      parseInt(p.qty)     || 1,
-      total:    parseFloat(p.total) || 0,
-      status:   'pending',
-      date:     p.date || new Date().toISOString().slice(0,10),
-      note:     p.note || '',
-      address:  p.address || '',
-      items:    [],
+      customer:  p.customer  || '',
+      phone:     p.phone     || '',
+      product:   p.product   || '',
+      productid: p.productId || '',
+      qty:       parseInt(p.qty)     || 1,
+      total:     parseFloat(p.total) || 0,
+      status:    'pending',
+      date:      p.date || new Date().toISOString().slice(0,10),
+      note:      p.note    || '',
+      address:   p.address || '',
+      items:     [],
     });
     res.json({ success: true, id });
   } catch(e) {
-    console.error('[shop order]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -440,16 +444,16 @@ app.get('/api/shop/order', async (req, res) => {
     const id = p.id || ('ORD-' + Date.now().toString().slice(-6));
     await Order.create({
       id,
-      customer: p.customer || '',
-      phone:    p.phone    || '',
-      product:  p.product  || '',
-      qty:      parseInt(p.qty)     || 1,
-      total:    parseFloat(p.total) || 0,
-      status:   'pending',
-      date:     p.date || new Date().toISOString().slice(0,10),
-      note:     p.note || '',
-      address:  p.address || '',
-      items:    [],
+      customer:  p.customer  || '',
+      phone:     p.phone     || '',
+      product:   p.product   || '',
+      qty:       parseInt(p.qty)     || 1,
+      total:     parseFloat(p.total) || 0,
+      status:    'pending',
+      date:      p.date || new Date().toISOString().slice(0,10),
+      note:      p.note    || '',
+      address:   p.address || '',
+      items:     [],
     });
     res.json({ success: true, id });
   } catch(e) {
@@ -485,19 +489,52 @@ app.get('/api/shop/track', async (req, res) => {
 });
 
 // ════════════════════════════════
-// INBOX (এখনো Sheet based — optional)
+// INBOX ROUTES — MongoDB
 // ════════════════════════════════
-app.get('/api/inbox', adminOnly, async (req, res) => {
-  if (!INBOX_SHEET_URL) return res.status(503).json({ error: 'INBOX_SHEET_URL not configured' });
+
+// ✅ n8n থেকে message save করবে (public — n8n এর জন্য)
+app.post('/api/inbox/save', async (req, res) => {
   try {
-    const params = new URLSearchParams(req.query);
-    const d = await safeFetch(`${INBOX_SHEET_URL}?${params.toString()}`);
-    res.json(d);
+    const p = req.body;
+    await Message.create({
+      id:         Date.now() + Math.random().toString(36).slice(2),
+      senderid:   p.senderId   || '',
+      sendername: p.senderName || p.senderId || '',
+      platform:   p.platform   || 'fb',
+      pageid:     p.pageId     || '',
+      message:    p.message    || '',
+      direction:  p.direction  || 'in',
+      timestamp:  p.timestamp  || new Date().toISOString(),
+      read:       p.direction === 'out' ? 'true' : 'false',
+      convid:     p.convId     || p.senderId || '',
+    });
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[inbox save]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ✅ Admin panel থেকে messages পড়বে
+app.get('/api/inbox', adminOnly, async (req, res) => {
+  const action = req.query.action || '';
+  try {
+    if (action === 'getMessages') {
+      const msgs = await Message.find().sort({ timestamp: -1 }).limit(500);
+      return res.json({ messages: cleanAll(msgs) });
+    }
+    if (action === 'markRead') {
+      const convId = req.query.convId || '';
+      await Message.updateMany({ convid: convId }, { read: 'true' });
+      return res.json({ success: true });
+    }
+    res.json({ error: 'Unknown action' });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+// ✅ Admin panel থেকে reply পাঠাবে n8n এ
 app.post('/api/inbox/reply', adminOnly, async (req, res) => {
   if (!N8N_REPLY_URL) return res.status(503).json({ error: 'N8N_REPLY_URL not configured' });
   try {
@@ -522,25 +559,23 @@ app.get('/api/config', (req, res) => {
     whatsapp: WHATSAPP_NUMBER,
     hasStock: true,
     hasShop:  true,
-    hasInbox: !!INBOX_SHEET_URL,
+    hasInbox: true,
   });
 });
 
 app.get('/health', async (req, res) => {
-  const dbState = mongoose.connection.readyState;
+  const dbState  = mongoose.connection.readyState;
   const dbStatus = ['disconnected','connected','connecting','disconnecting'][dbState] || 'unknown';
   res.json({
-    ok:       dbState === 1,
-    db:       dbStatus,
-    ts:       Date.now(),
-    hasInbox: !!INBOX_SHEET_URL,
-    hasN8n:   !!N8N_REPLY_URL,
+    ok:     dbState === 1,
+    db:     dbStatus,
+    ts:     Date.now(),
+    hasN8n: !!N8N_REPLY_URL,
   });
 });
 
-// Cache clear (now just a no-op since we use MongoDB)
 app.post('/api/cache/clear', adminOnly, (req, res) => {
-  res.json({ ok: true, message: 'No cache to clear (MongoDB mode)' });
+  res.json({ ok: true, message: 'No cache (MongoDB mode)' });
 });
 
 // ════════════════════════════════
@@ -557,6 +592,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`✅ Minsah running on port ${PORT} (MongoDB mode)`);
-  console.log(`   Inbox:  ${INBOX_SHEET_URL ? '✅' : '❌ not configured'}`);
-  console.log(`   n8n:    ${N8N_REPLY_URL   ? '✅' : '❌ not configured'}`);
+  console.log(`   n8n:    ${N8N_REPLY_URL ? '✅' : '❌ not configured'}`);
 });
