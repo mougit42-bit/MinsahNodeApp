@@ -1,0 +1,824 @@
+const express  = require('express');
+const cors     = require('cors');
+const path     = require('path');
+const mongoose = require('mongoose');
+
+const app  = express();
+const PORT = process.env.PORT || 4000;
+
+// ════════════════════════════════
+// ENV VARIABLES
+// ════════════════════════════════
+const MONGODB_URL          = process.env.MONGODB_URL          || '';
+const N8N_REPLY_URL        = process.env.N8N_REPLY_URL        || '';
+const WHATSAPP_NUMBER      = process.env.WHATSAPP_NUMBER      || '';
+const META_VERIFY_TOKEN    = process.env.META_VERIFY_TOKEN    || '';
+const META_GRAPH_API_TOKEN = process.env.META_GRAPH_API_TOKEN || '';
+
+// ২টা Page এর tokens
+const PAGE_TOKENS = {
+  '1060414697146343': process.env.PAGE_TOKEN_1060414697146343 || '',
+  '1045182078668089': process.env.PAGE_TOKEN_1045182078668089 || '',
+};
+
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+if (!ADMIN_PASSWORD) {
+  console.error('❌ FATAL: ADMIN_PASSWORD env variable set নেই!');
+  process.exit(1);
+}
+if (!MONGODB_URL) {
+  console.error('❌ FATAL: MONGODB_URL env variable set নেই!');
+  process.exit(1);
+}
+
+// ════════════════════════════════
+// MONGOOSE SCHEMAS
+// ════════════════════════════════
+const inventorySchema = new mongoose.Schema({
+  id:           { type: String, required: true, unique: true },
+  name:         { type: String, default: '' },
+  brand:        { type: String, default: '' },
+  country:      { type: String, default: '' },
+  variant:      { type: String, default: '' },
+  size:         { type: String, default: '' },
+  buyprice:     { type: Number, default: 0 },
+  sellprice:    { type: Number, default: 0 },
+  qty:          { type: Number, default: 0 },
+  supplier:     { type: String, default: '' },
+  lastbuydate:  { type: String, default: '' },
+  lowestbuy:    { type: Number, default: 0 },
+  image:        { type: String, default: '' },
+  totalsold:    { type: Number, default: 0 },
+  lastsolddate: { type: String, default: '' },
+}, { timestamps: true });
+
+const orderSchema = new mongoose.Schema({
+  id:           { type: String, required: true, unique: true },
+  parcelid:     { type: String, default: '' },
+  trackinglink: { type: String, default: '' },
+  customer:     { type: String, default: '' },
+  phone:        { type: String, default: '' },
+  product:      { type: String, default: '' },
+  productid:    { type: String, default: '' },
+  variant:      { type: String, default: '' },
+  qty:          { type: Number, default: 1 },
+  total:        { type: Number, default: 0 },
+  status:       { type: String, default: 'pending' },
+  date:         { type: String, default: '' },
+  note:         { type: String, default: '' },
+  items:        { type: Array,  default: [] },
+  address:      { type: String, default: '' },
+  district:     { type: String, default: '' },
+  thana:        { type: String, default: '' },
+}, { timestamps: true });
+
+const supplierSchema = new mongoose.Schema({
+  id:      { type: String, required: true, unique: true },
+  name:    { type: String, default: '' },
+  phone:   { type: String, default: '' },
+  phone2:  { type: String, default: '' },
+  phone3:  { type: String, default: '' },
+  address: { type: String, default: '' },
+}, { timestamps: true });
+
+const restockSchema = new mongoose.Schema({
+  id:            { type: String, required: true, unique: true },
+  productid:     { type: String, default: '' },
+  productname:   { type: String, default: '' },
+  addedqty:      { type: Number, default: 0 },
+  purchaseprice: { type: Number, default: 0 },
+  supplier:      { type: String, default: '' },
+  date:          { type: String, default: '' },
+  note:          { type: String, default: '' },
+}, { timestamps: true });
+
+// ✅ Message Schema — image, comment support সহ
+const messageSchema = new mongoose.Schema({
+  id:          { type: String, required: true, unique: true },
+  senderid:    { type: String, default: '' },
+  sendername:  { type: String, default: '' },
+  senderavatar:{ type: String, default: '' },  // profile picture URL
+  platform:    { type: String, default: 'fb' }, // 'fb' | 'ig'
+  pageid:      { type: String, default: '' },
+  message:     { type: String, default: '' },
+  imageurl:    { type: String, default: '' },   // customer পাঠানো image
+  direction:   { type: String, default: 'in' }, // 'in' | 'out'
+  type:        { type: String, default: 'message' }, // 'message' | 'comment'
+  commentid:   { type: String, default: '' },   // Facebook comment ID (reply করতে লাগবে)
+  postid:      { type: String, default: '' },   // কোন post এর comment
+  timestamp:   { type: String, default: '' },
+  read:        { type: String, default: 'false' },
+  convid:      { type: String, default: '' },
+}, { timestamps: true });
+
+const Inventory = mongoose.model('Inventory', inventorySchema);
+const Order     = mongoose.model('Order',     orderSchema);
+const Supplier  = mongoose.model('Supplier',  supplierSchema);
+const Restock   = mongoose.model('Restock',   restockSchema);
+const Message   = mongoose.model('Message',   messageSchema);
+
+// ════════════════════════════════
+// MONGODB CONNECT
+// ════════════════════════════════
+mongoose.connect(MONGODB_URL)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch(e => { console.error('❌ MongoDB connection failed:', e.message); process.exit(1); });
+
+// ════════════════════════════════
+// MIDDLEWARE
+// ════════════════════════════════
+app.use(cors({ origin: '*', credentials: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ── ADMIN AUTH ──
+function adminOnly(req, res, next) {
+  const token = req.headers['x-admin-token'];
+  if (!token || token !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// ── doc → plain object ──
+function clean(doc) {
+  if (!doc) return null;
+  const obj = doc.toObject ? doc.toObject() : { ...doc };
+  delete obj._id;
+  delete obj.__v;
+  delete obj.createdAt;
+  delete obj.updatedAt;
+  return obj;
+}
+function cleanAll(docs) { return docs.map(clean); }
+
+// ── Page token খোঁজো ──
+function getPageToken(pageId) {
+  return PAGE_TOKENS[pageId] || META_GRAPH_API_TOKEN || '';
+}
+
+// ── Meta Graph API helper ──
+async function metaPost(url, body, token) {
+  const r = await fetch(url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ ...body, access_token: token }),
+  });
+  return r.json();
+}
+
+// ── Sender name + avatar fetch ──
+async function fetchSenderProfile(senderId, token) {
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/v19.0/${senderId}?fields=name,profile_pic&access_token=${token}`
+    );
+    const d = await r.json();
+    return { name: d.name || senderId, avatar: d.profile_pic || '' };
+  } catch(e) {
+    return { name: senderId, avatar: '' };
+  }
+}
+
+// ════════════════════════════════
+// META WEBHOOK ROUTES
+// ════════════════════════════════
+
+// ── GET: Webhook Verification (Meta developer console থেকে)
+app.get('/webhook/meta', (req, res) => {
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && token === META_VERIFY_TOKEN) {
+    console.log('✅ Meta webhook verified');
+    res.status(200).send(challenge);
+  } else {
+    console.warn('❌ Webhook verification failed');
+    res.sendStatus(403);
+  }
+});
+
+// ── POST: Webhook Receiver — Message + Comment + Image
+app.post('/webhook/meta', async (req, res) => {
+  res.sendStatus(200); // Meta কে আগেই 200 দাও — timeout এড়াতে
+
+  try {
+    const body = req.body;
+    if (!body || !body.entry) return;
+
+    for (const entry of body.entry) {
+      const pageId = entry.id;
+      const token  = getPageToken(pageId);
+
+      // ── ১. MESSAGES (Messenger + Instagram DM)
+      for (const event of entry.messaging || []) {
+        if (!event.message) continue;
+        if (event.message.is_echo) continue; // নিজের sent message skip
+
+        const senderId = event.sender.id;
+        const msgText  = event.message.text || '';
+        const platform = body.object === 'instagram' ? 'ig' : 'fb';
+
+        // Image / attachment check
+        let imageUrl   = '';
+        let displayMsg = msgText;
+        const attachments = event.message.attachments || [];
+        for (const att of attachments) {
+          if (att.type === 'image') {
+            imageUrl   = att.payload?.url || '';
+            displayMsg = displayMsg || '📷 Image';
+          } else if (att.type === 'audio') {
+            displayMsg = displayMsg || '🎵 Audio';
+          } else if (att.type === 'video') {
+            displayMsg = displayMsg || '🎥 Video';
+          } else if (att.type === 'file') {
+            displayMsg = displayMsg || '📎 File';
+          } else if (att.type === 'sticker') {
+            displayMsg = displayMsg || '🔖 Sticker';
+          } else if (att.type === 'location') {
+            displayMsg = displayMsg || '📍 Location';
+          }
+        }
+
+        // Profile fetch
+        const profile = await fetchSenderProfile(senderId, token);
+
+        await Message.create({
+          id:           Date.now() + Math.random().toString(36).slice(2),
+          senderid:     senderId,
+          sendername:   profile.name,
+          senderavatar: profile.avatar,
+          platform,
+          pageid:       pageId,
+          message:      displayMsg,
+          imageurl:     imageUrl,
+          direction:    'in',
+          type:         'message',
+          timestamp:    new Date().toISOString(),
+          read:         'false',
+          convid:       senderId,
+        });
+
+        console.log(`[webhook] 💬 Message from ${profile.name} (${platform}): ${displayMsg}`);
+      }
+
+      // ── ২. COMMENTS (Facebook Page posts)
+      for (const change of entry.changes || []) {
+        if (change.field !== 'feed') continue;
+        const val = change.value;
+
+        // নতুন comment
+        if (val.item === 'comment' && val.verb === 'add') {
+          const commentId = val.comment_id || '';
+          const postId    = val.post_id    || '';
+          const from      = val.from       || {};
+          const commentMsg= val.message    || '';
+
+          // নিজের page এর comment skip
+          if (from.id === pageId) continue;
+
+          await Message.create({
+            id:          Date.now() + Math.random().toString(36).slice(2),
+            senderid:    from.id    || '',
+            sendername:  from.name  || from.id || 'Unknown',
+            platform:    'fb',
+            pageid:      pageId,
+            message:     commentMsg,
+            imageurl:    '',
+            direction:   'in',
+            type:        'comment',
+            commentid:   commentId,
+            postid:      postId,
+            timestamp:   new Date().toISOString(),
+            read:        'false',
+            convid:      from.id || commentId,
+          });
+
+          console.log(`[webhook] 💬 Comment from ${from.name}: ${commentMsg}`);
+        }
+      }
+    }
+  } catch(e) {
+    console.error('[webhook meta error]', e.message);
+  }
+});
+
+// ════════════════════════════════
+// STOCK ROUTES — GET ALL
+// ════════════════════════════════
+app.get('/api/stock', adminOnly, async (req, res) => {
+  try {
+    const [inventory, orders, suppliers, restocks] = await Promise.all([
+      Inventory.find().sort({ createdAt: -1 }),
+      Order.find().sort({ createdAt: -1 }),
+      Supplier.find().sort({ createdAt: -1 }),
+      Restock.find().sort({ createdAt: -1 }),
+    ]);
+    res.json({
+      inventory: cleanAll(inventory),
+      orders:    cleanAll(orders),
+      suppliers: cleanAll(suppliers),
+      restocks:  cleanAll(restocks),
+    });
+  } catch(e) {
+    console.error('[stock getAll]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════
+// STOCK WRITE — POST
+// ════════════════════════════════
+app.post('/api/stock/write', adminOnly, async (req, res) => {
+  const p      = req.body;
+  const action = p.action || '';
+
+  try {
+    // ── INVENTORY ──
+    if (action === 'addProduct') {
+      const id  = 'P' + Date.now();
+      const buy = parseFloat(p.buyprice || p.buy) || 0;
+      await Inventory.create({
+        id,
+        name:        p.name     || '',
+        brand:       p.brand    || '',
+        country:     p.country  || '',
+        variant:     p.variant  || '',
+        size:        p.size     || '',
+        buyprice:    buy,
+        sellprice:   parseFloat(p.sellprice || p.sell) || 0,
+        qty:         parseInt(p.qty)   || 0,
+        supplier:    p.supplier || '',
+        lastbuydate: p.buydate  || new Date().toISOString().slice(0,10),
+        lowestbuy:   parseFloat(p.lowestbuy) || buy,
+        image:       p.image    || '',
+        totalsold:   0,
+        lastsolddate:'',
+      });
+      return res.json({ success: true, id });
+    }
+
+    if (action === 'updateProduct') {
+      const update = {};
+      if (p.name      !== undefined) update.name        = p.name;
+      if (p.brand     !== undefined) update.brand       = p.brand;
+      if (p.country   !== undefined) update.country     = p.country;
+      if (p.variant   !== undefined) update.variant     = p.variant;
+      if (p.size      !== undefined) update.size        = p.size;
+      if (p.buyprice  !== undefined || p.buy  !== undefined)
+        update.buyprice  = parseFloat(p.buyprice || p.buy) || 0;
+      if (p.sellprice !== undefined || p.sell !== undefined)
+        update.sellprice = parseFloat(p.sellprice || p.sell) || 0;
+      if (p.qty       !== undefined) update.qty         = parseInt(p.qty) || 0;
+      if (p.supplier  !== undefined) update.supplier    = p.supplier;
+      if (p.buydate   !== undefined) update.lastbuydate = p.buydate;
+      if (p.lowestbuy !== undefined) update.lowestbuy   = parseFloat(p.lowestbuy) || 0;
+      if (p.image     !== undefined) update.image       = p.image;
+      const doc = await Inventory.findOneAndUpdate({ id: p.id }, update, { new: true });
+      if (!doc) return res.json({ error: 'Not found: ' + p.id });
+      return res.json({ success: true });
+    }
+
+    if (action === 'deleteProduct') {
+      await Inventory.deleteOne({ id: p.id });
+      return res.json({ success: true });
+    }
+
+    if (action === 'restock') {
+      const qty   = parseInt(p.qty)     || 0;
+      const price = parseFloat(p.price) || 0;
+      const prod  = await Inventory.findOne({ id: p.productId });
+      if (!prod) return res.json({ error: 'Product not found: ' + p.productId });
+      const newQty    = (prod.qty || 0) + qty;
+      const curLowest = prod.lowestbuy || price;
+      await Inventory.findOneAndUpdate({ id: p.productId }, {
+        buyprice:    price,
+        qty:         newQty,
+        lastbuydate: p.date || new Date().toISOString().slice(0,10),
+        lowestbuy:   Math.min(curLowest, price),
+      });
+      await Restock.create({
+        id:            'RS' + Date.now(),
+        productid:     p.productId   || '',
+        productname:   p.productName || '',
+        addedqty:      qty,
+        purchaseprice: price,
+        supplier:      p.supplier    || '',
+        date:          p.date || new Date().toISOString().slice(0,10),
+        note:          p.note || '',
+      });
+      return res.json({ success: true });
+    }
+
+    if (action === 'updateSold') {
+      const qty  = parseInt(p.qty) || 1;
+      const date = p.date || new Date().toISOString().slice(0,10);
+      const prod = await Inventory.findOne({ id: p.id });
+      if (!prod) return res.json({ error: 'Product not found' });
+      await Inventory.findOneAndUpdate({ id: p.id }, {
+        totalsold:    (prod.totalsold || 0) + qty,
+        lastsolddate: date,
+      });
+      return res.json({ success: true });
+    }
+
+    // ── ORDERS ──
+    if (action === 'addOrder') {
+      const id = p.id || ('ORD-' + Date.now().toString().slice(-6));
+      let items = p.items || [];
+      if (typeof items === 'string') {
+        try { items = JSON.parse(items); } catch(e) { items = []; }
+      }
+      await Order.create({
+        id,
+        parcelid:     p.parcelId     || '',
+        trackinglink: p.trackingLink || '',
+        customer:     p.customer     || '',
+        phone:        p.phone        || '',
+        product:      p.product      || '',
+        productid:    p.productId    || '',
+        variant:      p.variant      || '',
+        qty:          parseInt(p.qty)     || 1,
+        total:        parseFloat(p.total) || 0,
+        status:       p.status || 'pending',
+        date:         p.date   || new Date().toISOString().slice(0,10),
+        note:         p.note   || '',
+        items,
+        address:      p.address  || '',
+        district:     p.district || '',
+        thana:        p.thana    || '',
+      });
+      return res.json({ success: true, id });
+    }
+
+    if (action === 'updateOrder') {
+      const update = {};
+      if (p.parcelId     !== undefined) update.parcelid     = p.parcelId;
+      if (p.trackingLink !== undefined) update.trackinglink = p.trackingLink;
+      if (p.customer     !== undefined) update.customer     = p.customer;
+      if (p.phone        !== undefined) update.phone        = p.phone;
+      if (p.product      !== undefined) update.product      = p.product;
+      if (p.productId    !== undefined) update.productid    = p.productId;
+      if (p.variant      !== undefined) update.variant      = p.variant;
+      if (p.qty          !== undefined) update.qty          = parseInt(p.qty) || 1;
+      if (p.total        !== undefined) update.total        = parseFloat(p.total) || 0;
+      if (p.status       !== undefined) update.status       = p.status;
+      if (p.date         !== undefined) update.date         = p.date;
+      if (p.note         !== undefined) update.note         = p.note;
+      if (p.address      !== undefined) update.address      = p.address;
+      if (p.district     !== undefined) update.district     = p.district;
+      if (p.thana        !== undefined) update.thana        = p.thana;
+      if (p.items        !== undefined) {
+        let items = p.items;
+        if (typeof items === 'string') { try { items = JSON.parse(items); } catch(e) { items = []; } }
+        update.items = items;
+      }
+      const doc = await Order.findOneAndUpdate({ id: p.id }, update, { new: true });
+      if (!doc) return res.json({ error: 'Not found: ' + p.id });
+      return res.json({ success: true });
+    }
+
+    if (action === 'deleteOrder') {
+      await Order.deleteOne({ id: p.id });
+      return res.json({ success: true });
+    }
+
+    if (action === 'updateOrderStatus') {
+      await Order.findOneAndUpdate({ id: p.id }, { status: p.status });
+      return res.json({ success: true });
+    }
+
+    if (action === 'updateTracking') {
+      const update = {};
+      if (p.parcelId     !== undefined) update.parcelid     = p.parcelId;
+      if (p.trackingLink !== undefined) update.trackinglink = p.trackingLink;
+      if (p.status       !== undefined) update.status       = p.status;
+      await Order.findOneAndUpdate({ id: p.id }, update);
+      return res.json({ success: true });
+    }
+
+    // ── SUPPLIERS ──
+    if (action === 'addSupplier') {
+      const id = 'S' + Date.now();
+      await Supplier.create({
+        id,
+        name:    p.name    || '',
+        phone:   p.phone   || '',
+        phone2:  p.phone2  || '',
+        phone3:  p.phone3  || '',
+        address: p.address || '',
+      });
+      return res.json({ success: true, id });
+    }
+
+    if (action === 'updateSupplier') {
+      await Supplier.findOneAndUpdate({ id: p.id }, {
+        name:    p.name    || '',
+        phone:   p.phone   || '',
+        phone2:  p.phone2  || '',
+        phone3:  p.phone3  || '',
+        address: p.address || '',
+      });
+      return res.json({ success: true });
+    }
+
+    if (action === 'deleteSupplier') {
+      await Supplier.deleteOne({ id: p.id });
+      return res.json({ success: true });
+    }
+
+    return res.json({ error: 'Unknown action: ' + action });
+
+  } catch(e) {
+    console.error('[stock write]', action, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════
+// SHOP ROUTES (Public)
+// ════════════════════════════════
+app.get('/api/shop/products', async (req, res) => {
+  try {
+    const inv = await Inventory.find({ qty: { $gt: 0 } }).sort({ createdAt: -1 });
+    const products = cleanAll(inv).map(p => ({
+      id:        p.id,
+      name:      p.name,
+      brand:     p.brand    || '',
+      variant:   p.variant  || '',
+      size:      p.size     || '',
+      country:   p.country  || '',
+      image:     p.image    || '',
+      sell:      p.sellprice || 0,
+      sellprice: p.sellprice || 0,
+      qty:       p.qty || 0,
+    }));
+    res.json({ products });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/shop/order', async (req, res) => {
+  try {
+    const p  = req.body;
+    const id = p.id || ('ORD-' + Date.now().toString().slice(-6));
+    await Order.create({
+      id,
+      customer:  p.customer  || '',
+      phone:     p.phone     || '',
+      product:   p.product   || '',
+      productid: p.productId || '',
+      qty:       parseInt(p.qty)     || 1,
+      total:     parseFloat(p.total) || 0,
+      status:    'pending',
+      date:      p.date || new Date().toISOString().slice(0,10),
+      note:      p.note    || '',
+      address:   p.address || '',
+      items:     [],
+    });
+    res.json({ success: true, id });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/shop/order', async (req, res) => {
+  try {
+    const p  = req.query;
+    const id = p.id || ('ORD-' + Date.now().toString().slice(-6));
+    await Order.create({
+      id,
+      customer:  p.customer  || '',
+      phone:     p.phone     || '',
+      product:   p.product   || '',
+      qty:       parseInt(p.qty)     || 1,
+      total:     parseFloat(p.total) || 0,
+      status:    'pending',
+      date:      p.date || new Date().toISOString().slice(0,10),
+      note:      p.note    || '',
+      address:   p.address || '',
+      items:     [],
+    });
+    res.json({ success: true, id });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/shop/track', async (req, res) => {
+  const { orderId } = req.query;
+  if (!orderId) return res.status(400).json({ error: 'orderId required' });
+  try {
+    const order = await Order.findOne({
+      $or: [
+        { id:       { $regex: new RegExp('^'+orderId+'$','i') } },
+        { parcelid: { $regex: new RegExp('^'+orderId+'$','i') } },
+      ]
+    });
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    const o = clean(order);
+    res.json({
+      id:           o.id,
+      product:      o.product,
+      customer:     o.customer,
+      status:       o.status,
+      date:         o.date,
+      total:        o.total,
+      parcelid:     o.parcelid     || '',
+      trackinglink: o.trackinglink || '',
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════
+// INBOX ROUTES — MongoDB
+// ════════════════════════════════
+
+// ── n8n থেকে message save (public endpoint)
+app.post('/api/inbox/save', async (req, res) => {
+  try {
+    const p = req.body;
+    await Message.create({
+      id:          Date.now() + Math.random().toString(36).slice(2),
+      senderid:    p.senderId    || '',
+      sendername:  p.senderName  || p.senderId || '',
+      senderavatar:p.senderAvatar|| '',
+      platform:    p.platform    || 'fb',
+      pageid:      p.pageId      || '',
+      message:     p.message     || '',
+      imageurl:    p.imageUrl    || '',
+      direction:   p.direction   || 'in',
+      type:        p.type        || 'message',
+      commentid:   p.commentId   || '',
+      postid:      p.postId      || '',
+      timestamp:   p.timestamp   || new Date().toISOString(),
+      read:        p.direction === 'out' ? 'true' : 'false',
+      convid:      p.convId      || p.senderId || '',
+    });
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[inbox save]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin panel থেকে messages পড়া + markRead
+app.get('/api/inbox', adminOnly, async (req, res) => {
+  const action = req.query.action || '';
+  try {
+    if (action === 'getMessages') {
+      const msgs = await Message.find().sort({ timestamp: -1 }).limit(500);
+      return res.json({ messages: cleanAll(msgs) });
+    }
+    if (action === 'markRead') {
+      const convId = req.query.convId || '';
+      await Message.updateMany({ convid: convId }, { read: 'true' });
+      return res.json({ success: true });
+    }
+    res.json({ error: 'Unknown action' });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin থেকে Messenger/Instagram DM reply (text + image)
+app.post('/api/inbox/reply', adminOnly, async (req, res) => {
+  const { recipientId, message, imageUrl, pageId } = req.body;
+  if (!recipientId) return res.status(400).json({ error: 'recipientId required' });
+
+  const token = getPageToken(pageId);
+  if (!token) return res.status(400).json({ error: 'Page token not found for pageId: ' + pageId });
+
+  try {
+    // Text message পাঠাও
+    if (message) {
+      const r = await metaPost(
+        'https://graph.facebook.com/v19.0/me/messages',
+        { recipient: { id: recipientId }, message: { text: message } },
+        token
+      );
+      if (r.error) return res.status(400).json({ error: r.error.message });
+    }
+
+    // Image পাঠাও
+    if (imageUrl) {
+      await metaPost(
+        'https://graph.facebook.com/v19.0/me/messages',
+        {
+          recipient: { id: recipientId },
+          message:   { attachment: { type: 'image', payload: { url: imageUrl, is_reusable: true } } },
+        },
+        token
+      );
+    }
+
+    // Outgoing message MongoDB তে save করো
+    await Message.create({
+      id:        Date.now() + Math.random().toString(36).slice(2),
+      senderid:  recipientId,
+      direction: 'out',
+      type:      'message',
+      message:   message || (imageUrl ? '📷 Image sent' : ''),
+      imageurl:  imageUrl || '',
+      platform:  'fb',
+      pageid:    pageId || '',
+      timestamp: new Date().toISOString(),
+      read:      'true',
+      convid:    recipientId,
+    });
+
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[inbox reply]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin থেকে Facebook Comment reply
+app.post('/api/inbox/comment-reply', adminOnly, async (req, res) => {
+  const { commentId, message, pageId, senderId } = req.body;
+  if (!commentId || !message) return res.status(400).json({ error: 'commentId and message required' });
+
+  const token = getPageToken(pageId);
+  if (!token) return res.status(400).json({ error: 'Page token not found for pageId: ' + pageId });
+
+  try {
+    // Facebook comment এ reply
+    const r = await metaPost(
+      `https://graph.facebook.com/v19.0/${commentId}/comments`,
+      { message },
+      token
+    );
+    if (r.error) return res.status(400).json({ error: r.error.message });
+
+    // Outgoing comment MongoDB তে save
+    await Message.create({
+      id:        Date.now() + Math.random().toString(36).slice(2),
+      senderid:  senderId  || commentId,
+      direction: 'out',
+      type:      'comment',
+      message:   message,
+      commentid: commentId,
+      platform:  'fb',
+      pageid:    pageId || '',
+      timestamp: new Date().toISOString(),
+      read:      'true',
+      convid:    senderId || commentId,
+    });
+
+    res.json({ success: true, commentReplyId: r.id });
+  } catch(e) {
+    console.error('[comment reply]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════
+// PUBLIC CONFIG
+// ════════════════════════════════
+app.get('/api/config', (req, res) => {
+  res.json({
+    whatsapp: WHATSAPP_NUMBER,
+    hasStock: true,
+    hasShop:  true,
+    hasInbox: true,
+  });
+});
+
+app.get('/health', async (req, res) => {
+  const dbState  = mongoose.connection.readyState;
+  const dbStatus = ['disconnected','connected','connecting','disconnecting'][dbState] || 'unknown';
+  res.json({
+    ok:          dbState === 1,
+    db:          dbStatus,
+    ts:          Date.now(),
+    webhook:     !!META_VERIFY_TOKEN,
+    pageTokens:  Object.keys(PAGE_TOKENS).filter(k => !!PAGE_TOKENS[k]),
+  });
+});
+
+app.post('/api/cache/clear', adminOnly, (req, res) => {
+  res.json({ ok: true, message: 'No cache (MongoDB mode)' });
+});
+
+// ════════════════════════════════
+// HTML ROUTES
+// ════════════════════════════════
+app.get('/admin',   (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/admin/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('*',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'shop.html')));
+
+app.use((err, req, res, next) => {
+  console.error('[server error]', err.message);
+  res.status(500).json({ error: err.message });
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Minsah running on port ${PORT} (MongoDB mode)`);
+  console.log(`   Webhook: ${META_VERIFY_TOKEN ? '✅ /webhook/meta' : '❌ META_VERIFY_TOKEN not set'}`);
+  console.log(`   Pages:   ${Object.keys(PAGE_TOKENS).filter(k => PAGE_TOKENS[k]).join(', ') || '❌ none'}`);
+});
