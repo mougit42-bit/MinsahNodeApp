@@ -1690,28 +1690,43 @@ function renderChatMsgs(msgs) {
 
 async function sendReply() {
   const text = document.getElementById('chatInput').value.trim();
-  if (!text||!currentConvId) return;
-  if (!INBOX_N8N_URL) return toast('n8n URL নেই — Settings এ দাও','err');
-  const conv = inboxConvs.find(c=>c.convId===currentConvId);
+  if (!text || !currentConvId) return;
+  const conv = inboxConvs.find(c => c.convId === currentConvId);
   const btn  = document.getElementById('chatSendBtn');
-  btn.textContent='⏳'; btn.disabled=true;
+  btn.textContent = '⏳'; btn.disabled = true;
   try {
-    await fetch(PROXY_BASE+'/api/inbox/reply',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-admin-token':ADMIN_TOKEN},
-      body:JSON.stringify({recipientId:currentConvId,message:text,platform:conv?.platform||'fb',pageId:conv?.pageId||''})
+    const r = await fetch(PROXY_BASE + '/api/inbox/reply', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': ADMIN_TOKEN },
+      body:    JSON.stringify({
+        recipientId: currentConvId,
+        message:     text,
+        platform:    conv?.platform || 'fb',
+        pageId:      conv?.pageId   || ''
+      })
     });
-    const newMsg={id:Date.now()+'',message:text,direction:'out',timestamp:new Date().toISOString(),read:'true',convid:currentConvId};
+    const d = await r.json();
+    if (d.error) return toast('Failed: ' + d.error, 'err');
+
+    const newMsg = {
+      id:        Date.now() + '',
+      message:   text,
+      direction: 'out',
+      timestamp: new Date().toISOString(),
+      read:      'true',
+      convid:    currentConvId
+    };
     if (conv) conv.messages.push(newMsg);
     inboxMessages.push(newMsg);
-    renderChatMsgs(conv?.messages||[newMsg]);
-    document.getElementById('chatInput').value='';
-    document.getElementById('chatInput').style.height='auto';
-    toast('Sent ✓','ok');
-  } catch(e) { toast('Reply failed: '+e.message,'err'); }
-  btn.textContent='➤'; btn.disabled=false;
+    renderChatMsgs(conv?.messages || [newMsg]);
+    document.getElementById('chatInput').value = '';
+    document.getElementById('chatInput').style.height = 'auto';
+    toast('Sent ✓', 'ok');
+  } catch(e) {
+    toast('Reply failed: ' + e.message, 'err');
+  }
+  btn.textContent = '➤'; btn.disabled = false;
 }
-
 function startInboxPoll() {
   if (inboxPollTimer) clearInterval(inboxPollTimer);
   document.getElementById('pollBar').style.display='flex';
