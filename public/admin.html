@@ -1276,14 +1276,18 @@ function renderChatMsgs(msgs){
     const t=m.timestamp?new Date(m.timestamp).toLocaleTimeString('en-BD',{hour:'2-digit',minute:'2-digit'}):'';
     const prev=msgs[i-1];
     const showName=!out&&(!prev||prev.direction==='out');
-    const hasImg=m.imageurl&&m.imageurl.trim();
+    const mt=m.mediatype||(m.imageurl?(m.message&&m.message.includes('🎵')?'audio':m.message&&m.message.includes('🎥')?'video':'image'):'message');
+    const hasUrl=m.imageurl&&m.imageurl.trim();
     return `<div class="msg-row ${out?'msg-row-out':'msg-row-in'}">
       ${!out?`<div class="msg-avatar">${showName?(senderName[0]||'?').toUpperCase():''}</div>`:''}
       <div class="msg-col">
         ${showName&&!out?`<div class="msg-sender-name">${esc(senderName)}</div>`:''}
         <div class="msg-bubble ${out?'outgoing':'incoming'}">
-          ${hasImg?`<img src="${esc(m.imageurl)}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:${m.message?'6px':'0'}">`:''}
-          ${m.message?`<span>${esc(m.message)}</span>`:''}
+          ${mt==='image'&&hasUrl?`<img src="${esc(m.imageurl)}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" onerror="this.style.display='none'">`:''}
+          ${mt==='audio'&&hasUrl?`<div style="display:flex;align-items:center;gap:6px;padding:2px 0"><span style="font-size:16px">🎵</span><audio controls style="height:30px;max-width:160px" src="${esc(m.imageurl)}"></audio></div>`:''}
+          ${mt==='video'&&hasUrl?`<video controls style="max-width:200px;border-radius:8px;display:block" preload="metadata"><source src="${esc(m.imageurl)}"></video>`:''}
+          ${mt==='file'&&hasUrl?`<a href="${esc(m.imageurl)}" target="_blank" style="display:flex;align-items:center;gap:6px;color:inherit;text-decoration:none"><span>📎</span><span style="font-size:12px;text-decoration:underline">Download</span></a>`:''}
+          ${m.message&&!['📷 Image','🎵 Audio','🎵 Voice Message','🎥 Video','📎 File','🔖 Sticker'].includes(m.message)?`<span>${esc(m.message)}</span>`:''}
           <div class="msg-time">${t}</div>
         </div>
       </div>
