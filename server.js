@@ -2,6 +2,7 @@ const express  = require('express');
 const cors     = require('cors');
 const path     = require('path');
 const mongoose = require('mongoose');
+const Minio    = require('minio');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -20,6 +21,68 @@ const PAGE_TOKENS = {
   '1060414697146343': process.env.PAGE_TOKEN_1060414697146343 || '',
   '1045182078668089': process.env.PAGE_TOKEN_1045182078668089 || '',
 };
+
+// MinIO config
+const MINIO_ENDPOINT   = process.env.MINIO_ENDPOINT   || '';
+const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || '';
+const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || '';
+const MINIO_BUCKET     = process.env.MINIO_BUCKET     || 'minsah-inbox';
+const MINIO_USE_SSL    = process.env.MINIO_USE_SSL !== 'false';
+
+// MinIO client
+let minioClient = null;
+if (MINIO_ENDPOINT && MINIO_ACCESS_KEY && MINIO_SECRET_KEY) {
+  minioClient = new Minio.Client({
+    endPoint:  MINIO_ENDPOINT,
+    port:      MINIO_USE_SSL ? 443 : 9000,
+    useSSL:    MINIO_USE_SSL,
+    accessKey: MINIO_ACCESS_KEY,
+    secretKey: MINIO_SECRET_KEY,
+  });
+  minioClient.bucketExists(MINIO_BUCKET, (err, exists) => {
+    if (err) { console.error('[MinIO] bucket check error:', err.message); return; }
+    if (!exists) {
+      minioClient.makeBucket(MINIO_BUCKET, 'ap-south-1', (err) => {
+        if (err) console.error('[MinIO] bucket create error:', err.message);
+        else {
+          console.log(`✅ MinIO bucket '${MINIO_BUCKET}' created`);
+          const policy = JSON.stringify({
+            Version: '2012-10-17',
+            Statement: [{ Effect: 'Allow', Principal: { AWS: ['*'] }, Action: ['s3:GetObject'], Resource: [`arn:aws:s3:::${MINIO_BUCKET}/*`] }]
+          });
+          minioClient.setBucketPolicy(MINIO_BUCKET, policy, () => {});
+        }
+      });
+    } else {
+      console.log(`✅ MinIO connected — bucket: ${MINIO_BUCKET}`);
+    }
+  });
+}
+
+// ── MinIO তে file save করো
+async function saveToMinio(metaUrl, pageToken, fileType = 'file') {
+  if (!minioClient) return metaUrl;
+  try {
+    const r = await fetch(metaUrl, { headers: pageToken ? { 'Authorization': `Bearer ${pageToken}` } : {} });
+    if (!r.ok) throw new Error('Download failed: ' + r.status);
+    const contentType = r.headers.get('content-type') || 'application/octet-stream';
+    const buffer = Buffer.from(await r.arrayBuffer());
+    const extMap = {
+      'audio/ogg': '.ogg', 'audio/mpeg': '.mp3', 'audio/mp4': '.m4a',
+      'audio/wav': '.wav', 'video/mp4': '.mp4', 'video/quicktime': '.mov',
+      'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
+    };
+    const ext = extMap[contentType] || ('.' + (contentType.split('/')[1] || 'bin'));
+    const filename = `${fileType}/${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+    await minioClient.putObject(MINIO_BUCKET, filename, buffer, buffer.length, { 'Content-Type': contentType });
+    const protocol = MINIO_USE_SSL ? 'https' : 'http';
+    const port = MINIO_USE_SSL ? '' : ':9000';
+    return `${protocol}://${MINIO_ENDPOINT}${port}/${MINIO_BUCKET}/${filename}`;
+  } catch(e) {
+    console.error('[MinIO save error]', e.message);
+    return metaUrl;
+  }
+}
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 if (!ADMIN_PASSWORD) {
@@ -109,6 +172,7 @@ const messageSchema = new mongoose.Schema({
   timestamp:   { type: String, default: '' },
   read:        { type: String, default: 'false' },
   convid:      { type: String, default: '' },
+  mediatype:   { type: String, default: 'message' }, // message|image|audio|video|file|location
 }, { timestamps: true });
 
 // ✅ Customer CRM schema
@@ -248,24 +312,36 @@ app.post('/webhook/meta', async (req, res) => {
         const msgText  = event.message.text || '';
         const platform = body.object === 'instagram' ? 'ig' : 'fb';
 
-        // Image / attachment check
+        // Image / attachment check — MinIO তে save করো
         let imageUrl   = '';
+        let mediaType  = 'message'; // message | image | audio | video
         let displayMsg = msgText;
         const attachments = event.message.attachments || [];
         for (const att of attachments) {
+          const rawUrl = att.payload?.url || att.file_url || '';
           if (att.type === 'image') {
-            imageUrl   = att.payload?.url || '';
+            imageUrl   = rawUrl ? await saveToMinio(rawUrl, token, 'images') : '';
             displayMsg = displayMsg || '📷 Image';
+            mediaType  = 'image';
           } else if (att.type === 'audio') {
-            displayMsg = displayMsg || '🎵 Audio';
+            imageUrl   = rawUrl ? await saveToMinio(rawUrl, token, 'audio') : '';
+            displayMsg = displayMsg || '🎵 Voice Message';
+            mediaType  = 'audio';
           } else if (att.type === 'video') {
+            imageUrl   = rawUrl ? await saveToMinio(rawUrl, token, 'video') : '';
             displayMsg = displayMsg || '🎥 Video';
+            mediaType  = 'video';
           } else if (att.type === 'file') {
+            imageUrl   = rawUrl ? await saveToMinio(rawUrl, token, 'files') : '';
             displayMsg = displayMsg || '📎 File';
+            mediaType  = 'file';
           } else if (att.type === 'sticker') {
+            imageUrl   = rawUrl ? await saveToMinio(rawUrl, token, 'stickers') : '';
             displayMsg = displayMsg || '🔖 Sticker';
+            mediaType  = 'image';
           } else if (att.type === 'location') {
-            displayMsg = displayMsg || '📍 Location';
+            displayMsg = displayMsg || `📍 Location: ${att.payload?.lat||''},${att.payload?.long||''}`;
+            mediaType  = 'location';
           }
         }
 
@@ -281,6 +357,7 @@ app.post('/webhook/meta', async (req, res) => {
           pageid:       pageId,
           message:      displayMsg,
           imageurl:     imageUrl,
+          mediatype:    mediaType,
           direction:    'in',
           type:         'message',
           timestamp:    new Date().toISOString(),
