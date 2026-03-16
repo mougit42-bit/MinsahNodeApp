@@ -111,11 +111,39 @@ const messageSchema = new mongoose.Schema({
   convid:      { type: String, default: '' },
 }, { timestamps: true });
 
+// ✅ Customer CRM schema
+const customerSchema = new mongoose.Schema({
+  fbid:        { type: String, required: true, unique: true }, // Facebook/Instagram sender ID
+  name:        { type: String, default: '' },
+  customname:  { type: String, default: '' }, // admin যে নাম দেবে
+  phone:       { type: String, default: '' },
+  address:     { type: String, default: '' },
+  district:    { type: String, default: '' },
+  thana:       { type: String, default: '' },
+  note:        { type: String, default: '' },
+  platform:    { type: String, default: 'fb' },
+  // Auto-calculated
+  totalorders: { type: Number, default: 0 },
+  totalspent:  { type: Number, default: 0 },
+  // tier: auto — 0 order=new, 1-2=bronze, 3-5=silver, 6+=gold
+  tier:        { type: String, default: 'new' }, // 'new'|'bronze'|'silver'|'gold'
+  lastorderat: { type: String, default: '' },
+}, { timestamps: true });
+
 const Inventory = mongoose.model('Inventory', inventorySchema);
 const Order     = mongoose.model('Order',     orderSchema);
 const Supplier  = mongoose.model('Supplier',  supplierSchema);
 const Restock   = mongoose.model('Restock',   restockSchema);
 const Message   = mongoose.model('Message',   messageSchema);
+const Customer  = mongoose.model('Customer',  customerSchema);
+
+// ── Tier calculate helper ──
+function calcTier(totalorders) {
+  if (totalorders === 0) return 'new';
+  if (totalorders <= 2)  return 'bronze';
+  if (totalorders <= 5)  return 'silver';
+  return 'gold';
+}
 
 // ════════════════════════════════
 // MONGODB CONNECT
@@ -773,6 +801,215 @@ app.post('/api/inbox/comment-reply', adminOnly, async (req, res) => {
     res.json({ success: true, commentReplyId: r.id });
   } catch(e) {
     console.error('[comment reply]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════
+// META HISTORY SYNC
+// ════════════════════════════════
+
+// ── পুরনো conversations bulk sync (admin এ একবার চালাবে)
+app.post('/api/inbox/sync-history', adminOnly, async (req, res) => {
+  const { pageId } = req.body;
+  const token = getPageToken(pageId);
+  if (!token) return res.status(400).json({ error: 'No page token for pageId: ' + pageId });
+
+  let totalSaved = 0;
+  let totalSkipped = 0;
+  let errors = [];
+
+  try {
+    // ── Step 1: সব conversations আনো (paginated)
+    let convUrl = `https://graph.facebook.com/v19.0/me/conversations?fields=id,participants&limit=100&access_token=${token}`;
+    let allConvIds = [];
+
+    while (convUrl) {
+      const r = await fetch(convUrl);
+      const d = await r.json();
+      if (d.error) { errors.push(d.error.message); break; }
+      for (const conv of d.data || []) allConvIds.push(conv.id);
+      convUrl = d.paging?.next || null;
+      if (allConvIds.length > 500) break; // safety limit
+    }
+
+    console.log(`[sync] Found ${allConvIds.length} conversations`);
+
+    // ── Step 2: প্রতিটা conversation এর messages আনো
+    for (const convId of allConvIds) {
+      try {
+        let msgUrl = `https://graph.facebook.com/v19.0/${convId}/messages?fields=id,message,from,created_time,attachments&limit=100&access_token=${token}`;
+
+        while (msgUrl) {
+          const r  = await fetch(msgUrl);
+          const d  = await r.json();
+          if (d.error) { errors.push(d.error.message); break; }
+
+          for (const msg of d.data || []) {
+            try {
+              // Duplicate check
+              const exists = await Message.findOne({ id: msg.id });
+              if (exists) { totalSkipped++; continue; }
+
+              const isOut     = msg.from?.id === pageId;
+              const senderId  = isOut ? pageId : (msg.from?.id || '');
+              const senderName= isOut ? 'Minsah' : (msg.from?.name || '');
+
+              // Image attachment check
+              let imageUrl = '';
+              let msgText  = msg.message || '';
+              for (const att of msg.attachments?.data || []) {
+                if (att.image_data?.url) { imageUrl = att.image_data.url; msgText = msgText || '📷 Image'; }
+                else if (att.mime_type?.startsWith('image')) { imageUrl = att.file_url || ''; msgText = msgText || '📷 Image'; }
+                else if (att.mime_type?.startsWith('video')) { msgText = msgText || '🎥 Video'; }
+                else if (att.mime_type?.startsWith('audio')) { msgText = msgText || '🎵 Audio'; }
+              }
+
+              await Message.create({
+                id:          msg.id,
+                senderid:    senderId,
+                sendername:  senderName,
+                platform:    'fb',
+                pageid:      pageId,
+                message:     msgText,
+                imageurl:    imageUrl,
+                direction:   isOut ? 'out' : 'in',
+                type:        'message',
+                timestamp:   msg.created_time || new Date().toISOString(),
+                read:        'true',
+                convid:      senderId,
+              });
+              totalSaved++;
+            } catch(e) {
+              if (!e.message.includes('duplicate')) errors.push(e.message);
+            }
+          }
+
+          msgUrl = d.paging?.next || null;
+        }
+      } catch(e) {
+        errors.push('Conv ' + convId + ': ' + e.message);
+      }
+    }
+
+    console.log(`[sync] Saved: ${totalSaved}, Skipped: ${totalSkipped}`);
+    res.json({ success: true, saved: totalSaved, skipped: totalSkipped, convs: allConvIds.length, errors: errors.slice(0, 5) });
+
+  } catch(e) {
+    console.error('[sync history]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── দুটো page এর history একসাথে sync
+app.post('/api/inbox/sync-all', adminOnly, async (req, res) => {
+  const results = [];
+  for (const pageId of Object.keys(PAGE_TOKENS)) {
+    if (!PAGE_TOKENS[pageId]) continue;
+    try {
+      const r = await fetch(`http://localhost:${PORT}/api/inbox/sync-history`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': process.env.ADMIN_PASSWORD },
+        body:    JSON.stringify({ pageId }),
+      });
+      const d = await r.json();
+      results.push({ pageId, ...d });
+    } catch(e) {
+      results.push({ pageId, error: e.message });
+    }
+  }
+  res.json({ results });
+});
+
+// ════════════════════════════════
+// CUSTOMER CRM ROUTES
+// ════════════════════════════════
+
+// ── Facebook ID দিয়ে customer খোঁজো (inbox থেকে call হবে)
+app.get('/api/customers/:fbid', adminOnly, async (req, res) => {
+  try {
+    const fbid = req.params.fbid;
+    let customer = await Customer.findOne({ fbid });
+
+    if (!customer) {
+      // নতুন customer — orders থেকে data খোঁজার চেষ্টা করো
+      return res.json({ found: false, customer: null });
+    }
+
+    // Orders থেকে latest stats calculate করো
+    const custOrders = await Order.find({
+      $or: [
+        { customer: { $regex: new RegExp(customer.customname || customer.name, 'i') } },
+        { phone: customer.phone }
+      ]
+    }).sort({ createdAt: -1 });
+
+    const totalorders = custOrders.length;
+    const totalspent  = custOrders.reduce((s, o) => s + (o.total || 0), 0);
+    const tier        = calcTier(totalorders);
+    const lastorderat = custOrders[0]?.date || '';
+
+    // Update stats
+    await Customer.findOneAndUpdate({ fbid }, { totalorders, totalspent, tier, lastorderat });
+
+    res.json({
+      found: true,
+      customer: {
+        ...clean(customer),
+        totalorders,
+        totalspent,
+        tier,
+        lastorderat,
+        recentOrders: custOrders.slice(0, 5).map(o => ({
+          id:      o.id,
+          product: o.product,
+          total:   o.total,
+          status:  o.status,
+          date:    o.date,
+        })),
+      }
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Customer save/update (admin inbox profile card থেকে)
+app.post('/api/customers/save', adminOnly, async (req, res) => {
+  try {
+    const p = req.body;
+    if (!p.fbid) return res.status(400).json({ error: 'fbid required' });
+
+    const existing = await Customer.findOne({ fbid: p.fbid });
+    const totalorders = existing?.totalorders || 0;
+    const tier        = calcTier(totalorders);
+
+    const data = {
+      fbid:       p.fbid,
+      name:       p.name       || existing?.name || '',
+      customname: p.customname || existing?.customname || '',
+      phone:      p.phone      || existing?.phone || '',
+      address:    p.address    || existing?.address || '',
+      district:   p.district   || existing?.district || '',
+      thana:      p.thana      || existing?.thana || '',
+      note:       p.note       || existing?.note || '',
+      platform:   p.platform   || existing?.platform || 'fb',
+      tier,
+    };
+
+    await Customer.findOneAndUpdate({ fbid: p.fbid }, data, { upsert: true, new: true });
+    res.json({ success: true, tier });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── সব customers list
+app.get('/api/customers', adminOnly, async (req, res) => {
+  try {
+    const customers = await Customer.find().sort({ createdAt: -1 });
+    res.json({ customers: cleanAll(customers) });
+  } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
