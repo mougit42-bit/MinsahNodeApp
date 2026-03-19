@@ -1316,22 +1316,57 @@ async function sendReply(){
   btn.textContent='➤';btn.disabled=false;
 }
 
+let sseSource = null;
+
 function startInboxPoll(){
-  if(inboxPollTimer)clearInterval(inboxPollTimer);
+  // SSE দিয়ে real-time — polling বন্ধ
+  connectSSE();
+  // Fallback: প্রতি 30s এ একবার full refresh (SSE miss হলে)
+  if(inboxPollTimer) clearInterval(inboxPollTimer);
+  inboxPollTimer = setInterval(()=> fetchInboxMessages(), 30000);
+}
+
+function connectSSE(){
+  if(sseSource) sseSource.close();
   document.getElementById('pollBar').style.display='flex';
-  let lastCount=inboxMessages.length;
-  inboxPollTimer=setInterval(async()=>{
+  document.getElementById('pollBar').innerHTML='<div class="poll-dot"></div><span>Real-time connected ⚡</span>';
+
+  sseSource = new EventSource('/api/inbox/stream', {
+    headers: {'x-admin-token': ADMIN_TOKEN}
+  });
+
+  sseSource.addEventListener('connected', ()=>{
+    console.log('[SSE] connected');
+    document.getElementById('pollBar').innerHTML='<div class="poll-dot"></div><span>Real-time ⚡ Live</span>';
+  });
+
+  sseSource.addEventListener('new_message', async (e)=>{
+    const msg = JSON.parse(e.data);
+    console.log('[SSE] new message:', msg.sendername, msg.message);
+
+    // MongoDB থেকে full refresh
     await fetchInboxMessages();
-    if(inboxMessages.length>lastCount){
-      const newMsgs=inboxMessages.slice(lastCount).filter(m=>m.direction==='in');
-      if(newMsgs.length&&Notification.permission==='granted'){
-        const m=newMsgs[newMsgs.length-1];
-        new Notification('💬 '+esc(m.sendername||'নতুন message'),{body:m.message||'📷 Image'});
-      }
-      lastCount=inboxMessages.length;
+
+    // Notification
+    if(Notification.permission==='granted' && msg.direction==='in'){
+      new Notification('💬 '+(msg.sendername||'নতুন message'), {
+        body: msg.message || (msg.mediatype==='audio'?'🎵 Voice Message':'📷 Image'),
+        icon: '/favicon.ico'
+      });
     }
-    if(currentConvId){const conv=inboxConvs.find(c=>c.convId===currentConvId);if(conv)renderChatMsgs(conv.messages);}
-  },2000);
+
+    // Chat view update
+    if(currentConvId && currentConvId === msg.convid){
+      const conv = inboxConvs.find(c=>c.convId===currentConvId);
+      if(conv) renderChatMsgs(conv.messages);
+    }
+  });
+
+  sseSource.onerror = ()=>{
+    console.log('[SSE] disconnected — reconnecting in 5s...');
+    document.getElementById('pollBar').innerHTML='<div class="poll-dot" style="background:var(--red)"></div><span>Reconnecting...</span>';
+    setTimeout(connectSSE, 5000);
+  };
 }
 
 function autoResizeTa(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,110)+'px';}
