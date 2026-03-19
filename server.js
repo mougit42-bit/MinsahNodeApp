@@ -7,6 +7,19 @@ const Minio    = require('minio');
 const app  = express();
 const PORT = process.env.PORT || 4000;
 
+// ── SSE clients store (real-time push)
+const sseClients = new Set();
+
+function pushToClients(event, data) {
+  const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+  for (const client of sseClients) {
+    try { client.write(payload); } catch(e) { sseClients.delete(client); }
+  }
+}
+
 // ════════════════════════════════
 // ENV VARIABLES
 // ════════════════════════════════
@@ -28,13 +41,14 @@ const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || '';
 const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || '';
 const MINIO_BUCKET     = process.env.MINIO_BUCKET     || 'minsah-inbox';
 const MINIO_USE_SSL    = process.env.MINIO_USE_SSL !== 'false';
+const MINIO_PORT       = parseInt(process.env.MINIO_PORT) || (MINIO_USE_SSL ? 443 : 9000);
 
 // MinIO client
 let minioClient = null;
 if (MINIO_ENDPOINT && MINIO_ACCESS_KEY && MINIO_SECRET_KEY) {
   minioClient = new Minio.Client({
     endPoint:  MINIO_ENDPOINT,
-    port:      MINIO_USE_SSL ? 443 : 9000,
+    port:      MINIO_PORT,
     useSSL:    MINIO_USE_SSL,
     accessKey: MINIO_ACCESS_KEY,
     secretKey: MINIO_SECRET_KEY,
@@ -76,8 +90,8 @@ async function saveToMinio(metaUrl, pageToken, fileType = 'file') {
     const filename = `${fileType}/${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
     await minioClient.putObject(MINIO_BUCKET, filename, buffer, buffer.length, { 'Content-Type': contentType });
     const protocol = MINIO_USE_SSL ? 'https' : 'http';
-    const port = MINIO_USE_SSL ? '' : ':9000';
-    return `${protocol}://${MINIO_ENDPOINT}${port}/${MINIO_BUCKET}/${filename}`;
+    const portSuffix = MINIO_USE_SSL ? '' : `:${MINIO_PORT}`;
+    return `${protocol}://${MINIO_ENDPOINT}${portSuffix}/${MINIO_BUCKET}/${filename}`;
   } catch(e) {
     console.error('[MinIO save error]', e.message);
     return metaUrl;
@@ -366,6 +380,23 @@ app.post('/webhook/meta', async (req, res) => {
         });
 
         console.log(`[webhook] 💬 Message from ${profile.name} (${platform}): ${displayMsg}`);
+
+        // ── Real-time push to admin panel
+        pushToClients('new_message', {
+          senderid:    senderId,
+          sendername:  profile.name,
+          senderavatar:profile.avatar,
+          platform,
+          pageid:      pageId,
+          message:     displayMsg,
+          imageurl:    imageUrl,
+          mediatype:   mediaType,
+          direction:   'in',
+          type:        'message',
+          timestamp:   new Date().toISOString(),
+          read:        'false',
+          convid:      senderId,
+        });
       }
 
       // ── ২. COMMENTS (Facebook Page posts)
@@ -401,6 +432,22 @@ app.post('/webhook/meta', async (req, res) => {
           });
 
           console.log(`[webhook] 💬 Comment from ${from.name}: ${commentMsg}`);
+
+          // ── Real-time push
+          pushToClients('new_message', {
+            senderid:   from.id || '',
+            sendername: from.name || 'Unknown',
+            platform:   'fb',
+            pageid:     pageId,
+            message:    commentMsg,
+            direction:  'in',
+            type:       'comment',
+            commentid:  commentId,
+            postid:     postId,
+            timestamp:  new Date().toISOString(),
+            read:       'false',
+            convid:     from.id || commentId,
+          });
         }
       }
     }
@@ -1117,6 +1164,41 @@ app.get('/health', async (req, res) => {
 
 app.post('/api/cache/clear', adminOnly, (req, res) => {
   res.json({ ok: true, message: 'No cache (MongoDB mode)' });
+});
+
+// ════════════════════════════════
+// SSE — Real-time push to admin
+// ════════════════════════════════
+app.get('/api/inbox/stream', adminOnly, (req, res) => {
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // nginx buffering বন্ধ
+  res.flushHeaders();
+
+  // Connected
+  res.write(`event: connected
+data: {"ok":true}
+
+`);
+
+  // Heartbeat every 25s — connection alive রাখো
+  const heartbeat = setInterval(() => {
+    try { res.write(`:heartbeat
+
+`); } catch(e) { cleanup(); }
+  }, 25000);
+
+  sseClients.add(res);
+
+  function cleanup() {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  }
+
+  req.on('close',   cleanup);
+  req.on('error',   cleanup);
+  res.on('error',   cleanup);
 });
 
 // ════════════════════════════════
