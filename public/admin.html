@@ -559,8 +559,6 @@ body{font-family:'Nunito',sans-serif;background:var(--pink-50);color:var(--gray-
 // ═══════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════
-const CLOUD_NAME   = 'dqpyaypo4';
-const CLOUD_PRESET = 'rhsew6wy';
 const PROXY_BASE   = '';
 
 // ── Admin login ──
@@ -769,16 +767,36 @@ async function deleteProduct(id){
 // ═══════════════════════════════════════════════════════
 async function handleImageUpload(input){
   const file=input.files[0];if(!file)return;
+
+  // File size check — 20MB max
+  if(file.size > 20*1024*1024) return toast('File too large (max 20MB)','err');
+
   document.getElementById('imgPlaceholder').style.display='none';
   document.getElementById('imgUploading').style.display='flex';
   document.getElementById('imgPreview').style.display='none';
+
   try{
-    const fd=new FormData();fd.append('file',file);fd.append('upload_preset',CLOUD_PRESET);
-    const r=await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,{method:'POST',body:fd});
-    const d=await r.json();
-    if(d.secure_url){setImagePreview(d.secure_url);document.getElementById('p-imgurl').value=d.secure_url;toast('Image uploaded ✓','ok');}
-    else toast('Upload failed','err');
-  }catch{toast('Upload failed','err');}
+    const fd = new FormData();
+    fd.append('image', file);
+    fd.append('folder', 'products');
+
+    const r = await fetch(PROXY_BASE+'/api/upload', {
+      method:  'POST',
+      headers: { 'x-admin-token': ADMIN_TOKEN },
+      body:    fd,
+    });
+    const d = await r.json();
+
+    if(d.url){
+      setImagePreview(d.url);
+      document.getElementById('p-imgurl').value=d.url;
+      toast('Image uploaded ✓ (WebP optimized)','ok');
+    } else {
+      toast('Upload failed: '+(d.error||'unknown'),'err');
+    }
+  } catch(e) {
+    toast('Upload failed: '+e.message,'err');
+  }
   document.getElementById('imgUploading').style.display='none';
 }
 function setImagePreview(url){const img=document.getElementById('imgPreview');img.src=url;img.style.display='block';document.getElementById('imgPlaceholder').style.display='none';document.getElementById('imgUpload').classList.add('has-img');}
