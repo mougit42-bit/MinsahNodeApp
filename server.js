@@ -991,14 +991,35 @@ app.post('/api/inbox/sync-history', adminOnly, async (req, res) => {
               const senderId  = isOut ? pageId : (msg.from?.id || '');
               const senderName= isOut ? 'Minsah' : (msg.from?.name || '');
 
-              // Image attachment check
-              let imageUrl = '';
-              let msgText  = msg.message || '';
+              // Attachment check + RustFS এ save
+              let imageUrl  = '';
+              let mediaType = 'message';
+              let msgText   = msg.message || '';
+
               for (const att of msg.attachments?.data || []) {
-                if (att.image_data?.url) { imageUrl = att.image_data.url; msgText = msgText || '📷 Image'; }
-                else if (att.mime_type?.startsWith('image')) { imageUrl = att.file_url || ''; msgText = msgText || '📷 Image'; }
-                else if (att.mime_type?.startsWith('video')) { msgText = msgText || '🎥 Video'; }
-                else if (att.mime_type?.startsWith('audio')) { msgText = msgText || '🎵 Audio'; }
+                const rawUrl = att.image_data?.url || att.file_url || att.payload?.url || '';
+
+                if (att.image_data?.url || att.mime_type?.startsWith('image')) {
+                  // Image → RustFS
+                  imageUrl  = rawUrl ? await saveToMinio(rawUrl, token, 'images') : '';
+                  msgText   = msgText || '📷 Image';
+                  mediaType = 'image';
+                } else if (att.mime_type?.startsWith('audio')) {
+                  // Audio/Voice → RustFS
+                  imageUrl  = rawUrl ? await saveToMinio(rawUrl, token, 'audio') : '';
+                  msgText   = msgText || '🎵 Voice Message';
+                  mediaType = 'audio';
+                } else if (att.mime_type?.startsWith('video')) {
+                  // Video → RustFS
+                  imageUrl  = rawUrl ? await saveToMinio(rawUrl, token, 'video') : '';
+                  msgText   = msgText || '🎥 Video';
+                  mediaType = 'video';
+                } else if (att.mime_type) {
+                  // Other file → RustFS
+                  imageUrl  = rawUrl ? await saveToMinio(rawUrl, token, 'files') : '';
+                  msgText   = msgText || '📎 File';
+                  mediaType = 'file';
+                }
               }
 
               await Message.create({
@@ -1009,6 +1030,7 @@ app.post('/api/inbox/sync-history', adminOnly, async (req, res) => {
                 pageid:      pageId,
                 message:     msgText,
                 imageurl:    imageUrl,
+                mediatype:   mediaType,
                 direction:   isOut ? 'out' : 'in',
                 type:        'message',
                 timestamp:   msg.created_time || new Date().toISOString(),
