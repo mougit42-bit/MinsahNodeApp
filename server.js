@@ -3,6 +3,18 @@ const cors     = require('cors');
 const path     = require('path');
 const mongoose = require('mongoose');
 const Minio    = require('minio');
+const sharp    = require('sharp');
+const multer   = require('multer');
+
+// Multer — memory storage (file disk এ যাবে না)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 20 * 1024 * 1024 }, // 20MB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only images allowed'));
+  }
+});
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -1153,17 +1165,107 @@ app.get('/api/config', (req, res) => {
 app.get('/health', async (req, res) => {
   const dbState  = mongoose.connection.readyState;
   const dbStatus = ['disconnected','connected','connecting','disconnecting'][dbState] || 'unknown';
+
+  // RustFS/MinIO check
+  let storageOk = false;
+  let storageMsg = 'not configured';
+  if (minioClient) {
+    try {
+      await minioClient.bucketExists(MINIO_BUCKET);
+      storageOk  = true;
+      storageMsg = `connected — bucket: ${MINIO_BUCKET}`;
+    } catch(e) {
+      storageMsg = e.message;
+    }
+  }
+
   res.json({
     ok:          dbState === 1,
     db:          dbStatus,
     ts:          Date.now(),
     webhook:     !!META_VERIFY_TOKEN,
     pageTokens:  Object.keys(PAGE_TOKENS).filter(k => !!PAGE_TOKENS[k]),
+    storage:     { ok: storageOk, msg: storageMsg },
+    sseClients:  sseClients.size,
   });
 });
 
 app.post('/api/cache/clear', adminOnly, (req, res) => {
   res.json({ ok: true, message: 'No cache (MongoDB mode)' });
+});
+
+// ════════════════════════════════
+// IMAGE UPLOAD — RustFS + Sharp
+// ════════════════════════════════
+
+// ── Image optimize + RustFS তে save helper
+async function processAndSaveImage(buffer, originalMime, folder = 'products') {
+  if (!minioClient) throw new Error('Storage not configured');
+
+  // Sharp দিয়ে optimize করো
+  let processed;
+  let finalMime = 'image/webp';
+  let ext       = '.webp';
+
+  try {
+    const img = sharp(buffer);
+    const meta = await img.metadata();
+
+    // Resize — max 1200px wide, proportional height
+    processed = await img
+      .resize({
+        width:  1200,
+        height: 1200,
+        fit:    'inside',         // aspect ratio maintain করো
+        withoutEnlargement: true  // ছোট image বড় করবে না
+      })
+      .webp({ quality: 82 })     // WebP format, 82% quality
+      .toBuffer();
+
+    console.log(`[image] ${meta.width}x${meta.height} → optimized WebP (${Math.round(processed.length/1024)}KB)`);
+  } catch(e) {
+    console.warn('[image] Sharp failed, using original:', e.message);
+    processed  = buffer;
+    finalMime  = originalMime;
+    ext        = '.' + (originalMime.split('/')[1] || 'jpg');
+  }
+
+  // RustFS তে upload
+  const filename = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+  await minioClient.putObject(MINIO_BUCKET, filename, processed, processed.length, {
+    'Content-Type': finalMime,
+  });
+
+  // Public URL বানাও
+  const protocol   = MINIO_USE_SSL ? 'https' : 'http';
+  const portSuffix = MINIO_USE_SSL ? '' : `:${MINIO_PORT}`;
+  return `${protocol}://${MINIO_ENDPOINT}${portSuffix}/${MINIO_BUCKET}/${filename}`;
+}
+
+// ── POST /api/upload — admin panel থেকে image upload
+app.post('/api/upload', adminOnly, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No image provided' });
+
+    const folder = req.body.folder || 'products'; // products | covers | etc
+    const url    = await processAndSaveImage(req.file.buffer, req.file.mimetype, folder);
+
+    res.json({ success: true, url });
+  } catch(e) {
+    console.error('[upload]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/upload/test — storage test
+app.get('/api/upload/test', adminOnly, async (req, res) => {
+  if (!minioClient) return res.json({ ok: false, msg: 'Storage not configured' });
+  try {
+    const exists = await minioClient.bucketExists(MINIO_BUCKET);
+    res.json({ ok: true, bucket: MINIO_BUCKET, exists });
+  } catch(e) {
+    res.json({ ok: false, msg: e.message });
+  }
 });
 
 // ════════════════════════════════
