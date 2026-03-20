@@ -957,7 +957,15 @@ app.post('/api/inbox/sync-history', adminOnly, async (req, res) => {
   let totalSkipped = 0;
   let errors = [];
 
+  // Progress push helper
+  function pushProgress(msg, pct) {
+    pushToClients('sync_progress', { msg, pct, saved: totalSaved, skipped: totalSkipped });
+    console.log(`[sync] ${pct}% — ${msg}`);
+  }
+
   try {
+    pushProgress('Conversations আনছি...', 0);
+
     // ── Step 1: সব conversations আনো (paginated)
     let convUrl = `https://graph.facebook.com/v19.0/me/conversations?fields=id,participants&limit=100&access_token=${token}`;
     let allConvIds = [];
@@ -972,9 +980,12 @@ app.post('/api/inbox/sync-history', adminOnly, async (req, res) => {
     }
 
     console.log(`[sync] Found ${allConvIds.length} conversations`);
+    pushProgress(`${allConvIds.length}টি conversation পেয়েছি`, 5);
 
     // ── Step 2: প্রতিটা conversation এর messages আনো
-    for (const convId of allConvIds) {
+    for (const [idx, convId] of allConvIds.entries()) {
+      const pct = Math.round(5 + (idx / allConvIds.length) * 90);
+      if (idx % 5 === 0) pushProgress(`Processing ${idx+1}/${allConvIds.length} conversations... (saved: ${totalSaved})`, pct);
       try {
         let msgUrl = `https://graph.facebook.com/v19.0/${convId}/messages?fields=id,message,from,created_time,attachments&limit=100&access_token=${token}`;
 
@@ -1053,6 +1064,7 @@ app.post('/api/inbox/sync-history', adminOnly, async (req, res) => {
     }
 
     console.log(`[sync] Saved: ${totalSaved}, Skipped: ${totalSkipped}`);
+    pushProgress(`✅ Sync complete! ${totalSaved} saved, ${totalSkipped} skipped`, 100);
     res.json({ success: true, saved: totalSaved, skipped: totalSkipped, convs: allConvIds.length, errors: errors.slice(0, 5) });
 
   } catch(e) {
@@ -1298,7 +1310,9 @@ app.get('/api/upload/test', adminOnly, async (req, res) => {
 // ════════════════════════════════
 // SSE — Real-time push to admin
 // ════════════════════════════════
-app.get('/api/inbox/stream', adminOnly, (req, res) => {
+app.get('/api/inbox/stream', (req, res) => {
+  const token = req.query.token || req.headers['x-admin-token'];
+  if (!token || token !== ADMIN_PASSWORD) return res.status(401).end();
   res.setHeader('Content-Type',  'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection',    'keep-alive');
