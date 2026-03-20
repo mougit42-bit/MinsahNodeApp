@@ -550,6 +550,10 @@ body{font-family:'Nunito',sans-serif;background:var(--pink-50);color:var(--gray-
     <button id="syncHistoryBtn" onclick="syncMetaHistory()" class="btn-connect" style="width:100%;padding:12px;font-size:14px">
       🔄 Sync History (1 Month)
     </button>
+    <div style="background:var(--gray-200);border-radius:4px;height:6px;margin-top:8px;overflow:hidden">
+      <div id="syncProgressBar" style="height:100%;background:linear-gradient(135deg,var(--pink),var(--rose));width:0%;transition:width .5s ease;border-radius:4px"></div>
+    </div>
+    <div id="syncProgressText" style="font-size:11px;color:var(--gray-400);margin-top:4px;text-align:center"></div>
   </div>
   <button class="btn-secondary" onclick="closeSettings()">Close</button>
 </div>
@@ -1349,13 +1353,28 @@ function connectSSE(){
   document.getElementById('pollBar').style.display='flex';
   document.getElementById('pollBar').innerHTML='<div class="poll-dot"></div><span>Real-time connected ⚡</span>';
 
-  sseSource = new EventSource('/api/inbox/stream', {
-    headers: {'x-admin-token': ADMIN_TOKEN}
-  });
+  sseSource = new EventSource('/api/inbox/stream?token='+encodeURIComponent(ADMIN_TOKEN));
 
   sseSource.addEventListener('connected', ()=>{
     console.log('[SSE] connected');
     document.getElementById('pollBar').innerHTML='<div class="poll-dot"></div><span>Real-time ⚡ Live</span>';
+  });
+
+  sseSource.addEventListener('sync_progress', (e)=>{
+    const d = JSON.parse(e.data);
+    const btn = document.getElementById('syncHistoryBtn');
+    if(btn) btn.textContent = `⏳ ${d.pct}% — ${d.msg}`;
+    // Progress bar update
+    const pb = document.getElementById('syncProgressBar');
+    if(pb) pb.style.width = d.pct+'%';
+    if(d.pct===100){
+      setTimeout(()=>{
+        if(btn) btn.textContent='🔄 Sync History (1 Month)';
+        if(btn) btn.disabled=false;
+        const pb=document.getElementById('syncProgressBar');
+        if(pb) pb.style.width='0%';
+      }, 2000);
+    }
   });
 
   sseSource.addEventListener('new_message', async (e)=>{
@@ -1477,19 +1496,27 @@ async function saveCustomerProfile(convId,platform){
 // ═══════════════════════════════════════════════════════
 async function syncMetaHistory(){
   const btn=document.getElementById('syncHistoryBtn');
-  btn.textContent='⏳ Syncing...';btn.disabled=true;
+  const pb=document.getElementById('syncProgressBar');
+  const pt=document.getElementById('syncProgressText');
+  btn.textContent='⏳ Starting...';btn.disabled=true;
+  if(pb)pb.style.width='0%';
   try{
     const pages=['1060414697146343','1045182078668089'];
     let totalSaved=0;
     for(const pageId of pages){
+      if(pt)pt.textContent=`Page ${pageId} sync করছি...`;
       const r=await fetch(PROXY_BASE+'/api/inbox/sync-history',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':ADMIN_TOKEN},body:JSON.stringify({pageId})});
       const d=await r.json();
       if(d.saved)totalSaved+=d.saved;
       console.log(`[sync page ${pageId}]`,d);
     }
     toast(`✅ ${totalSaved} পুরনো message sync হয়েছে`,'ok');
+    if(pt)pt.textContent=`✅ ${totalSaved} messages synced!`;
     await fetchInboxMessages();
-  }catch(e){toast('Sync failed: '+e.message,'err');}
+  }catch(e){
+    toast('Sync failed: '+e.message,'err');
+    if(pt)pt.textContent='❌ Failed: '+e.message;
+  }
   btn.textContent='🔄 Sync History (1 Month)';btn.disabled=false;
 }
 
