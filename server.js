@@ -54,6 +54,8 @@ const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || '';
 const MINIO_BUCKET     = process.env.MINIO_BUCKET     || 'minsah-inbox';
 const MINIO_USE_SSL    = process.env.MINIO_USE_SSL !== 'false';
 const MINIO_PORT       = parseInt(process.env.MINIO_PORT) || (MINIO_USE_SSL ? 443 : 9000);
+// Public URL for browser access (different from internal endpoint)
+const STORAGE_PUBLIC_URL = process.env.STORAGE_PUBLIC_URL || '';
 
 // MinIO client
 let minioClient = null;
@@ -1259,6 +1261,9 @@ async function processAndSaveImage(buffer, originalMime, folder = 'products') {
   });
 
   // Public URL বানাও
+  if (STORAGE_PUBLIC_URL) {
+    return `${STORAGE_PUBLIC_URL}/${MINIO_BUCKET}/${filename}`;
+  }
   const protocol   = MINIO_USE_SSL ? 'https' : 'http';
   const portSuffix = MINIO_USE_SSL ? '' : `:${MINIO_PORT}`;
   return `${protocol}://${MINIO_ENDPOINT}${portSuffix}/${MINIO_BUCKET}/${filename}`;
