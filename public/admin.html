@@ -1298,8 +1298,23 @@ function renderChatMsgs(msgs){
     const t=m.timestamp?new Date(m.timestamp).toLocaleTimeString('en-BD',{hour:'2-digit',minute:'2-digit'}):'';
     const prev=msgs[i-1];
     const showName=!out&&(!prev||prev.direction==='out');
-    const mt=m.mediatype||(m.imageurl?(m.message&&m.message.includes('🎵')?'audio':m.message&&m.message.includes('🎥')?'video':'image'):'message');
-    const hasUrl=m.imageurl&&m.imageurl.trim();
+    // mediatype detect — DB তে না থাকলে message/imageurl থেকে বোঝো
+    const hasUrl = m.imageurl && m.imageurl.trim();
+    let mt = m.mediatype || 'message';
+    if (!m.mediatype && hasUrl) {
+      // URL extension বা message দেখে detect করো
+      const url  = m.imageurl.toLowerCase();
+      const msg  = m.message || '';
+      if (msg.includes('🎵') || msg.includes('Voice') || url.includes('/audio/') || url.endsWith('.ogg') || url.endsWith('.mp3') || url.endsWith('.m4a') || url.endsWith('.wav')) {
+        mt = 'audio';
+      } else if (msg.includes('🎥') || url.includes('/video/') || url.endsWith('.mp4') || url.endsWith('.mov') || url.endsWith('.webm')) {
+        mt = 'video';
+      } else if (msg.includes('📎') || url.includes('/files/')) {
+        mt = 'file';
+      } else {
+        mt = 'image'; // default — imageurl আছে মানে image
+      }
+    }
     return `<div class="msg-row ${out?'msg-row-out':'msg-row-in'}">
       ${!out?`<div class="msg-avatar">${showName?(senderName[0]||'?').toUpperCase():''}</div>`:''}
       <div class="msg-col">
