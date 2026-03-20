@@ -103,6 +103,12 @@ async function saveToMinio(metaUrl, pageToken, fileType = 'file') {
     const ext = extMap[contentType] || ('.' + (contentType.split('/')[1] || 'bin'));
     const filename = `${fileType}/${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
     await minioClient.putObject(MINIO_BUCKET, filename, buffer, buffer.length, { 'Content-Type': contentType });
+    
+    // ✅ FIX: STORAGE_PUBLIC_URL থাকলে সেটি ব্যবহার করা হবে
+    if (STORAGE_PUBLIC_URL) {
+      return `${STORAGE_PUBLIC_URL}/${MINIO_BUCKET}/${filename}`;
+    }
+    
     const protocol = MINIO_USE_SSL ? 'https' : 'http';
     const portSuffix = MINIO_USE_SSL ? '' : `:${MINIO_PORT}`;
     return `${protocol}://${MINIO_ENDPOINT}${portSuffix}/${MINIO_BUCKET}/${filename}`;
@@ -111,6 +117,15 @@ async function saveToMinio(metaUrl, pageToken, fileType = 'file') {
     return metaUrl;
   }
 }
+//     await minioClient.putObject(MINIO_BUCKET, filename, buffer, buffer.length, { 'Content-Type': contentType });
+//     const protocol = MINIO_USE_SSL ? 'https' : 'http';
+//     const portSuffix = MINIO_USE_SSL ? '' : `:${MINIO_PORT}`;
+//     return `${protocol}://${MINIO_ENDPOINT}${portSuffix}/${MINIO_BUCKET}/${filename}`;
+//   } catch(e) {
+//     console.error('[MinIO save error]', e.message);
+//     return metaUrl;
+//   }
+// }
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 if (!ADMIN_PASSWORD) {
