@@ -33,7 +33,7 @@ body{font-family:'Nunito',sans-serif;background:var(--pink-50);color:var(--gray-
 .syncing .sync-dot{animation:blink 1s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .settings-btn{width:34px;height:34px;border-radius:50%;background:var(--pink-50);border:1.5px solid var(--pink-200);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px}
-.app-body{flex:1;overflow-y:auto;padding:14px 14px 80px;-webkit-overflow-scrolling:touch}
+.app-body{flex:1;overflow-y:auto;padding:14px 14px 80px;-webkit-overflow-scrolling:touch;position:relative}
 .tab-page{display:none}.tab-page.active{display:block}
 .bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--white);border-top:1px solid var(--pink-100);display:flex;z-index:100;box-shadow:0 -4px 20px rgba(247,45,122,.08)}
 .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;padding:8px 4px 10px;cursor:pointer;transition:all .2s;position:relative}
@@ -167,24 +167,26 @@ body{font-family:'Nunito',sans-serif;background:var(--pink-50);color:var(--gray-
 .conv-unread-dot{width:8px;height:8px;border-radius:50%;background:var(--pink)}
 .conv-tier{font-size:10px;margin-left:3px}
 /* Chat */
-.chat-back{display:flex;align-items:center;gap:10px;padding:10px 0 12px;border-bottom:1px solid var(--pink-100);margin-bottom:8px;flex-shrink:0}
+.chat-back{display:flex;align-items:center;gap:10px;padding:10px 12px 12px;border-bottom:1px solid var(--pink-100);flex-shrink:0;background:var(--white)}
 .chat-back-btn{width:32px;height:32px;border-radius:50%;background:var(--pink-50);border:1.5px solid var(--pink-200);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;flex-shrink:0}
 .chat-back-name{font-size:14px;font-weight:800;color:var(--gray-800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat-back-sub{font-size:10px;color:var(--gray-400);font-weight:600}
-.chat-messages{flex:1;overflow-y:auto;padding:4px 0 8px;display:flex;flex-direction:column;gap:4px;min-height:0;max-height:calc(100vh - 280px)}
-.msg-bubble{max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;font-weight:500;line-height:1.45;position:relative;word-break:break-word}
-.msg-bubble.incoming{background:var(--white);border:1px solid var(--pink-100);color:var(--gray-800);align-self:flex-start;border-bottom-left-radius:4px}
+.chat-messages{flex:1;overflow-y:auto;padding:8px 4px;display:flex;flex-direction:column;gap:6px}
+.msg-bubble{max-width:75%;padding:9px 13px;border-radius:16px;font-size:13px;font-weight:500;line-height:1.5;word-break:break-word}
+.msg-bubble.incoming{background:var(--white);border:1px solid var(--pink-100);color:var(--gray-800);align-self:flex-start;border-bottom-left-radius:4px;box-shadow:var(--shadow-sm)}
 .msg-bubble.outgoing{background:linear-gradient(135deg,var(--pink),var(--rose));color:white;align-self:flex-end;border-bottom-right-radius:4px}
-.msg-time{font-size:9px;opacity:.6;margin-top:3px;text-align:right}
-.chat-input-row{display:flex;gap:8px;align-items:flex-end;padding-top:8px;border-top:1px solid var(--pink-100);flex-shrink:0;margin-top:auto}
-.chat-input{flex:1;background:var(--white);border:1.5px solid var(--pink-200);border-radius:16px;padding:9px 14px;font-size:13px;font-family:'Nunito',sans-serif;color:var(--gray-800);outline:none;resize:none;max-height:100px;overflow-y:auto}
-.chat-send-btn{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--pink),var(--rose));color:white;border:none;font-size:16px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.msg-time{font-size:9px;opacity:.6;margin-top:4px;display:block}
+.msg-bubble.outgoing .msg-time{text-align:right}
+.chat-input-row{display:flex;gap:8px;align-items:flex-end;padding:8px 0 0;border-top:1px solid var(--pink-100);flex-shrink:0}
+.chat-input{flex:1;background:var(--white);border:1.5px solid var(--pink-200);border-radius:16px;padding:10px 14px;font-size:13px;font-family:'Nunito',sans-serif;color:var(--gray-800);outline:none;resize:none;max-height:100px;overflow-y:auto;line-height:1.4}
+.chat-input:focus{border-color:var(--pink)}
+.chat-send-btn{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--pink),var(--rose));color:white;border:none;font-size:18px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(247,45,122,.35)}
 /* Chat layout */
-.chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;padding:0 0 8px}
-.customer-sidebar{width:240px;min-width:240px;border-left:1px solid var(--pink-100);overflow-y:auto;background:white;flex-shrink:0}
-#inboxChatView{display:none;flex-direction:row!important;height:calc(100vh - 130px);overflow:hidden}
+.chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;height:100%}
+.customer-sidebar{width:250px;min-width:250px;border-left:1px solid var(--pink-100);overflow-y:auto;background:white;flex-shrink:0;height:100%}
+#inboxChatView{display:none;flex-direction:row;position:fixed;top:56px;left:0;right:0;bottom:56px;background:var(--pink-50);z-index:50;max-width:480px;margin:0 auto}
 /* Msg row */
-.msg-row{display:flex;align-items:flex-end;margin-bottom:6px;gap:6px}
+.msg-row{display:flex;align-items:flex-end;gap:6px;padding:0 8px}
 .msg-row-out{flex-direction:row-reverse}
 .msg-row-in{flex-direction:row}
 .msg-avatar{width:28px;height:28px;min-width:28px;background:var(--pink);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:white;align-self:flex-end;flex-shrink:0}
@@ -216,8 +218,6 @@ body{font-family:'Nunito',sans-serif;background:var(--pink-50);color:var(--gray-
 .rp-stock{font-size:11px;font-weight:600;color:var(--gray-400)}
 @media(max-width:768px){
   .customer-sidebar{display:none!important}
-  #inboxChatView{height:calc(100vh - 130px)}
-  .chat-messages{max-height:calc(100vh - 250px)}
 }
 </style>
 </head>
@@ -327,16 +327,22 @@ body{font-family:'Nunito',sans-serif;background:var(--pink-50);color:var(--gray-
     </div>
     <div id="inboxChatView">
       <div class="chat-main">
-        <div class="chat-back" onclick="closeChatView()">
+        <!-- Header -->
+        <div class="chat-back" onclick="closeChatView()" style="flex-shrink:0">
           <div class="chat-back-btn">←</div>
           <div style="flex:1;min-width:0">
             <div class="chat-back-name" id="chatBackName">—</div>
             <div class="chat-back-sub" id="chatBackSub">—</div>
           </div>
           <div id="chatPlatformIcon" style="font-size:20px"></div>
+          <button onclick="event.stopPropagation();openProfileOverlay(currentConvId,'fb')"
+            style="width:34px;height:34px;border-radius:50%;background:var(--pink-50);border:1.5px solid var(--pink-200);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:6px"
+            title="Customer Profile">👤</button>
         </div>
+        <!-- Messages -->
         <div class="chat-messages" id="chatMessages"></div>
-        <div class="chat-input-row">
+        <!-- Input -->
+        <div class="chat-input-row" style="padding:8px;flex-shrink:0">
           <textarea class="chat-input" id="chatInput" placeholder="Message লিখুন… (Enter = send)" rows="1"
             oninput="autoResizeTa(this)"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReply()}"></textarea>
@@ -363,6 +369,19 @@ body{font-family:'Nunito',sans-serif;background:var(--pink-50);color:var(--gray-
   </div>
 </nav>
 <div class="toasts" id="toastContainer"></div>
+
+<!-- CUSTOMER PROFILE QUICK VIEW -->
+<div class="overlay" id="profileOverlay" onclick="if(event.target===this)closeProfileOverlay()">
+<div class="sheet" style="max-height:85vh">
+  <div class="sheet-handle"></div>
+  <div id="profileOverlayContent">
+    <div style="text-align:center;padding:30px;color:var(--gray-400)">
+      <div style="font-size:32px;margin-bottom:8px">👤</div>
+      <div style="font-size:13px">Loading...</div>
+    </div>
+  </div>
+</div>
+</div>
 
 <!-- PRODUCT MODAL -->
 <div class="overlay" id="productOverlay" onclick="if(event.target===this)closeProductModal()">
@@ -1254,15 +1273,22 @@ function renderInbox(){
     const t=c.lastTime?new Date(c.lastTime).toLocaleTimeString('en-BD',{hour:'2-digit',minute:'2-digit'}):'';
     const tierEmoji=c.tier==='gold'?'🥇':c.tier==='silver'?'🥈':c.tier==='bronze'?'🥉':'';
     const hasOrder=orders.some(o=>(o.customer||'').toLowerCase()===(c.senderName||'').toLowerCase());
+    // Preview — image/voice show differently
+    let previewTxt = lastMsg?.message||'';
+    if(lastMsg?.mediatype==='image'||lastMsg?.imageurl?.includes('/images/')) previewTxt='📷 Image';
+    else if(lastMsg?.mediatype==='audio'||lastMsg?.imageurl?.includes('/audio/')) previewTxt='🎵 Voice';
+    else if(lastMsg?.mediatype==='video'||lastMsg?.imageurl?.includes('/video/')) previewTxt='🎥 Video';
     return `<div class="conv-card ${c.unread?'unread':''}" onclick="openChat('${c.convId}')">
       <div class="conv-avatar">${c.platform==='ig'?'📸':'📘'}</div>
       <div class="conv-info">
-        <div class="conv-name">${esc(c.senderName)}<span class="conv-tier">${tierEmoji}</span>${hasOrder?'<span style="font-size:9px;background:var(--green-light);color:#065f46;border-radius:8px;padding:1px 5px;margin-left:4px;font-weight:800">🟢 Customer</span>':''}</div>
-        <div class="conv-preview">${esc(lastMsg?.message||'')}</div>
+        <div class="conv-name">${esc(c.senderName)}<span class="conv-tier">${tierEmoji}</span>${hasOrder?'<span style="font-size:9px;background:var(--green-light);color:#065f46;border-radius:8px;padding:1px 5px;margin-left:4px;font-weight:800">🟢</span>':''}</div>
+        <div class="conv-preview">${esc(previewTxt)}</div>
       </div>
-      <div class="conv-meta">
+      <div class="conv-meta" style="align-items:flex-end;gap:5px">
         <div class="conv-time">${t}</div>
         ${c.unread?'<div class="conv-unread-dot"></div>':''}
+        <button onclick="event.stopPropagation();openProfileOverlay('${c.convId}','${c.platform||'fb'}')" 
+          style="width:24px;height:24px;border-radius:50%;background:var(--pink-50);border:1px solid var(--pink-200);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--pink)">👤</button>
       </div>
     </div>`;
   }).join('');
@@ -1303,50 +1329,81 @@ function closeChatView(){
   renderInbox();
 }
 
+function detectMediaType(m){
+  const url = (m.imageurl||'').toLowerCase();
+  const msg = m.message||'';
+  if(m.mediatype && m.mediatype!=='message') return m.mediatype;
+  if(!m.imageurl) return 'message';
+  if(url.includes('/audio/')||url.endsWith('.ogg')||url.endsWith('.mp3')||url.endsWith('.m4a')||url.endsWith('.wav')||msg.includes('🎵')||msg.includes('Voice')) return 'audio';
+  if(url.includes('/video/')||url.endsWith('.mp4')||url.endsWith('.mov')||url.endsWith('.webm')||msg.includes('🎥')) return 'video';
+  if(url.includes('/files/')||msg.includes('📎')) return 'file';
+  return 'image';
+}
+
 function renderChatMsgs(msgs){
   const el=document.getElementById('chatMessages');
-  if(!msgs.length){el.innerHTML='<div style="text-align:center;padding:20px;font-size:12px;color:var(--gray-400)">কোনো message নেই</div>';return;}
+  if(!el)return;
+  if(!msgs||!msgs.length){
+    el.innerHTML='<div style="text-align:center;padding:30px;font-size:12px;color:var(--gray-400)">কোনো message নেই</div>';
+    return;
+  }
   const conv=inboxConvs.find(c=>c.convId===currentConvId);
   const senderName=conv?.senderName||'User';
-  const wasAtBottom=el.scrollHeight-el.scrollTop-el.clientHeight<60;
+  const senderInitial=(senderName[0]||'?').toUpperCase();
+
   el.innerHTML=msgs.map((m,i)=>{
-    const out=m.direction==='out';
-    const t=m.timestamp?new Date(m.timestamp).toLocaleTimeString('en-BD',{hour:'2-digit',minute:'2-digit'}):'';
-    const prev=msgs[i-1];
-    const showName=!out&&(!prev||prev.direction==='out');
-    // mediatype detect — DB তে না থাকলে message/imageurl থেকে বোঝো
-    const hasUrl = m.imageurl && m.imageurl.trim();
-    let mt = m.mediatype || 'message';
-    if (!m.mediatype && hasUrl) {
-      // URL extension বা message দেখে detect করো
-      const url  = m.imageurl.toLowerCase();
-      const msg  = m.message || '';
-      if (msg.includes('🎵') || msg.includes('Voice') || url.includes('/audio/') || url.endsWith('.ogg') || url.endsWith('.mp3') || url.endsWith('.m4a') || url.endsWith('.wav')) {
-        mt = 'audio';
-      } else if (msg.includes('🎥') || url.includes('/video/') || url.endsWith('.mp4') || url.endsWith('.mov') || url.endsWith('.webm')) {
-        mt = 'video';
-      } else if (msg.includes('📎') || url.includes('/files/')) {
-        mt = 'file';
-      } else {
-        mt = 'image'; // default — imageurl আছে মানে image
+    const out   = m.direction==='out';
+    const t     = m.timestamp ? new Date(m.timestamp).toLocaleTimeString('en-BD',{hour:'2-digit',minute:'2-digit'}) : '';
+    const prev  = msgs[i-1];
+    const showAvatar = !out && (!prev || prev.direction==='out' || prev.senderid!==m.senderid);
+    const mt    = detectMediaType(m);
+    const url   = m.imageurl ? esc(m.imageurl) : '';
+    const txt   = m.message||'';
+    const showTxt = txt && !['📷 Image','🎵 Audio','🎵 Voice Message','🎥 Video','📎 File','🔖 Sticker'].includes(txt);
+
+    // Media HTML
+    let mediaHtml = '';
+    if(url){
+      if(mt==='image'){
+        mediaHtml = `<a href="${url}" target="_blank"><img src="${url}" 
+          style="max-width:200px;max-height:200px;border-radius:10px;display:block;cursor:pointer;margin-bottom:${showTxt?'6px':'0'}"
+          onerror="this.outerHTML='<div style=\'background:var(--gray-100);border-radius:10px;padding:12px;font-size:12px;color:var(--gray-400)\'>🖼 Image (expired)</div>'"
+        ></a>`;
+      } else if(mt==='audio'){
+        mediaHtml = `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;min-width:180px">
+          <span style="font-size:20px">🎵</span>
+          <audio controls style="flex:1;height:32px" src="${url}">
+            Your browser does not support audio.
+          </audio>
+        </div>`;
+      } else if(mt==='video'){
+        mediaHtml = `<video controls style="max-width:220px;border-radius:10px;display:block" preload="metadata">
+          <source src="${url}">
+        </video>`;
+      } else if(mt==='file'){
+        mediaHtml = `<a href="${url}" target="_blank" download
+          style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(0,0,0,.08);border-radius:10px;text-decoration:none;color:inherit">
+          <span style="font-size:18px">📎</span>
+          <span style="font-size:12px;font-weight:700">Download File</span>
+        </a>`;
       }
     }
+
     return `<div class="msg-row ${out?'msg-row-out':'msg-row-in'}">
-      ${!out?`<div class="msg-avatar">${showName?(senderName[0]||'?').toUpperCase():''}</div>`:''}
+      <div class="msg-avatar" style="visibility:${!out&&showAvatar?'visible':'hidden'}">${senderInitial}</div>
       <div class="msg-col">
-        ${showName&&!out?`<div class="msg-sender-name">${esc(senderName)}</div>`:''}
+        ${showAvatar&&!out?`<div class="msg-sender-name">${esc(senderName)}</div>`:''}
         <div class="msg-bubble ${out?'outgoing':'incoming'}">
-          ${mt==='image'&&hasUrl?`<img src="${esc(m.imageurl)}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" onerror="this.style.display='none'">`:''}
-          ${mt==='audio'&&hasUrl?`<div style="display:flex;align-items:center;gap:6px;padding:2px 0"><span style="font-size:16px">🎵</span><audio controls style="height:30px;max-width:160px" src="${esc(m.imageurl)}"></audio></div>`:''}
-          ${mt==='video'&&hasUrl?`<video controls style="max-width:200px;border-radius:8px;display:block" preload="metadata"><source src="${esc(m.imageurl)}"></video>`:''}
-          ${mt==='file'&&hasUrl?`<a href="${esc(m.imageurl)}" target="_blank" style="display:flex;align-items:center;gap:6px;color:inherit;text-decoration:none"><span>📎</span><span style="font-size:12px;text-decoration:underline">Download</span></a>`:''}
-          ${m.message&&!['📷 Image','🎵 Audio','🎵 Voice Message','🎥 Video','📎 File','🔖 Sticker'].includes(m.message)?`<span>${esc(m.message)}</span>`:''}
-          <div class="msg-time">${t}</div>
+          ${mediaHtml}
+          ${showTxt?`<span>${esc(txt)}</span>`:''}
+          <span class="msg-time">${t}</span>
         </div>
       </div>
     </div>`;
   }).join('');
-  if(wasAtBottom)setTimeout(()=>{el.scrollTop=el.scrollHeight;},30);
+
+  // Scroll to bottom
+  setTimeout(()=>{ el.scrollTop=el.scrollHeight; },50);
 }
 
 async function sendReply(){
@@ -1438,6 +1495,89 @@ function connectSSE(){
 }
 
 function autoResizeTa(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,110)+'px';}
+
+// ── Customer Profile Quick View
+async function openProfileOverlay(convId, platform){
+  document.getElementById('profileOverlay').classList.add('open');
+  document.getElementById('profileOverlayContent').innerHTML=`
+    <div style="text-align:center;padding:30px;color:var(--gray-400)">
+      <div style="font-size:32px;margin-bottom:8px">👤</div>
+      <div style="font-size:13px">Loading...</div>
+    </div>`;
+  try{
+    const r=await fetch(`${PROXY_BASE}/api/customers/${convId}`,{headers:{'x-admin-token':ADMIN_TOKEN}});
+    const d=await r.json();
+    const c=d.customer||{fbid:convId,platform};
+    const conv=inboxConvs.find(x=>x.convId===convId);
+    const fbName=conv?.senderName||'Unknown';
+    const name=c.customname||c.name||fbName;
+    const tier=c.tier||'new';
+    const totalorders=c.totalorders||0;
+    const totalspent=c.totalspent||0;
+    const recentOrds=c.recentOrders||[];
+    const statusColor={pending:'#f59e0b',processing:'#3b82f6',delivered:'#10b981',cancelled:'#ef4444',tracking:'#8b5cf6'};
+    const inp='width:100%;padding:8px 10px;background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:8px;font-size:12px;font-family:Nunito,sans-serif;outline:none;margin-bottom:6px;box-sizing:border-box';
+    document.getElementById('profileOverlayContent').innerHTML=`
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="width:48px;height:48px;background:linear-gradient(135deg,var(--pink),var(--rose));border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:white;flex-shrink:0">${(name[0]||'?').toUpperCase()}</div>
+        <div style="flex:1">
+          <div style="font-weight:800;font-size:16px;color:var(--gray-800)">${esc(name)}</div>
+          <div style="font-size:11px;color:var(--gray-400)">${platform==='ig'?'📸 Instagram':'📘 Facebook'}</div>
+        </div>
+        ${tierBadge(tier)}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+        <div style="background:var(--green-light);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:22px;font-weight:800;color:#065f46">${totalorders}</div>
+          <div style="font-size:10px;color:#065f46;font-weight:700">Orders</div>
+        </div>
+        <div style="background:var(--pink-50);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800;color:var(--pink)">৳${(totalspent||0).toLocaleString()}</div>
+          <div style="font-size:10px;color:var(--pink);font-weight:700">Spent</div>
+        </div>
+      </div>
+      <input id="po-name" value="${esc(c.customname||c.name||fbName)}" placeholder="নাম" style="${inp}">
+      <input id="po-phone" value="${esc(c.phone||'')}" placeholder="📞 Phone" style="${inp}">
+      <input id="po-address" value="${esc(c.address||'')}" placeholder="🏠 Address" style="${inp}">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+        <input id="po-district" value="${esc(c.district||'')}" placeholder="District" style="${inp}margin-bottom:0">
+        <input id="po-thana" value="${esc(c.thana||'')}" placeholder="Thana" style="${inp}margin-bottom:0">
+      </div>
+      <textarea id="po-note" placeholder="📝 Note..." style="${inp}height:60px;resize:none;margin-top:6px">${esc(c.note||'')}</textarea>
+      <button onclick="saveProfileFromOverlay('${convId}','${platform}')" class="btn-primary" style="margin-top:4px">💾 Save Profile</button>
+      ${recentOrds.length?`<div style="margin-top:14px">
+        <div style="font-size:10px;font-weight:800;color:var(--gray-400);text-transform:uppercase;margin-bottom:8px">Recent Orders</div>
+        ${recentOrds.map(o=>`<div style="background:var(--gray-50);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left:3px solid ${statusColor[o.status]||'#ccc'}">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11px;font-weight:800;color:var(--gray-700)">#${o.id}</span>
+            <span style="font-size:10px;font-weight:700;color:${statusColor[o.status]||'#666'}">${o.status}</span>
+          </div>
+          <div style="font-size:11px;color:var(--gray-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(o.product||'')}</div>
+          <div style="font-size:12px;font-weight:800;color:var(--pink)">৳${(o.total||0).toLocaleString()}</div>
+        </div>`).join('')}
+      </div>`:''}
+      <button onclick="openChat('${convId}')" class="btn-secondary" style="margin-top:6px">💬 Open Chat</button>`;
+  }catch(e){
+    document.getElementById('profileOverlayContent').innerHTML=`<div style="text-align:center;padding:20px;color:var(--red)">Failed to load</div>`;
+  }
+}
+
+async function saveProfileFromOverlay(convId,platform){
+  try{
+    const data={fbid:convId,customname:document.getElementById('po-name')?.value.trim()||'',phone:document.getElementById('po-phone')?.value.trim()||'',address:document.getElementById('po-address')?.value.trim()||'',district:document.getElementById('po-district')?.value.trim()||'',thana:document.getElementById('po-thana')?.value.trim()||'',note:document.getElementById('po-note')?.value.trim()||'',platform};
+    const r=await fetch(`${PROXY_BASE}/api/customers/save`,{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':ADMIN_TOKEN},body:JSON.stringify(data)});
+    const d=await r.json();
+    if(d.success){
+      toast('Profile saved ✓','ok');
+      // Update conv name
+      const conv=inboxConvs.find(c=>c.convId===convId);
+      if(conv&&data.customname){conv.senderName=data.customname;buildConvs();renderInbox();}
+      closeProfileOverlay();
+    }
+  }catch(e){toast('Save failed','err');}
+}
+
+function closeProfileOverlay(){document.getElementById('profileOverlay').classList.remove('open');}
 
 // ═══════════════════════════════════════════════════════
 // CUSTOMER CRM
