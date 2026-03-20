@@ -88,18 +88,28 @@ if (MINIO_ENDPOINT && MINIO_ACCESS_KEY && MINIO_SECRET_KEY) {
 }
 
 // ── MinIO তে file save করো
-async function saveToMinio(metaUrl, pageToken, fileType = 'file') {
-  if (!minioClient) return metaUrl;
-  try {
-    const r = await fetch(metaUrl, { headers: pageToken ? { 'Authorization': `Bearer ${pageToken}` } : {} });
-    if (!r.ok) throw new Error('Download failed: ' + r.status);
-    const contentType = r.headers.get('content-type') || 'application/octet-stream';
-    const buffer = Buffer.from(await r.arrayBuffer());
-    const extMap = {
-      'audio/ogg': '.ogg', 'audio/mpeg': '.mp3', 'audio/mp4': '.m4a',
-      'audio/wav': '.wav', 'video/mp4': '.mp4', 'video/quicktime': '.mov',
-      'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
-    };
+await minioClient.putObject(MINIO_BUCKET, filename, buffer, buffer.length, { 'Content-Type': contentType });
+    
+    // ✅ FIX: STORAGE_PUBLIC_URL থাকলে সেটি ব্যবহার করা হবে
+    if (STORAGE_PUBLIC_URL) {
+      return `${STORAGE_PUBLIC_URL}/${MINIO_BUCKET}/${filename}`;
+    }
+    
+    const protocol = MINIO_USE_SSL ? 'https' : 'http';
+    const portSuffix = MINIO_USE_SSL ? '' : `:${MINIO_PORT}`;
+    return `${protocol}://${MINIO_ENDPOINT}${portSuffix}/${MINIO_BUCKET}/${filename}`;
+// async function saveToMinio(metaUrl, pageToken, fileType = 'file') {
+//   if (!minioClient) return metaUrl;
+//   try {
+//     const r = await fetch(metaUrl, { headers: pageToken ? { 'Authorization': `Bearer ${pageToken}` } : {} });
+//     if (!r.ok) throw new Error('Download failed: ' + r.status);
+//     const contentType = r.headers.get('content-type') || 'application/octet-stream';
+//     const buffer = Buffer.from(await r.arrayBuffer());
+//     const extMap = {
+//       'audio/ogg': '.ogg', 'audio/mpeg': '.mp3', 'audio/mp4': '.m4a',
+//       'audio/wav': '.wav', 'video/mp4': '.mp4', 'video/quicktime': '.mov',
+//       'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
+//     };
     const ext = extMap[contentType] || ('.' + (contentType.split('/')[1] || 'bin'));
     const filename = `${fileType}/${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
     await minioClient.putObject(MINIO_BUCKET, filename, buffer, buffer.length, { 'Content-Type': contentType });
